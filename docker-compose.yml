@@ -1,0 +1,33 @@
+
+
+# Bu blok, uygulamamızın çalışacak olan tüm servislerini tanımlar.
+services:
+  # 'db' ismini verdiğimiz veritabanı servisimiz. Bu ismi biz seçtik.
+  db:
+    # Bu servisin hangi imajı kullanacağını belirtir. Docker Hub'dan resmi postgres:16-alpine imajını çekecek.
+    # 'alpine' versiyonu, çok daha küçük boyutlu ve güvenli bir Linux dağıtımıdır, bu yüzden tercih edilir.
+    image: postgres:16-alpine
+
+    # Eğer container bir şekilde çökerse veya durursa, Docker'ın onu her zaman yeniden başlatmasını söyler.
+    restart: always
+
+    # Container'ın içine göndereceğimiz ortam değişkenleri. Bunlar veritabanının ilk kurulumu için kullanılır.
+    environment:
+      POSTGRES_USER: onurust
+      POSTGRES_PASSWORD: santralfinansalriskpaneli
+      POSTGRES_DB: santral_db
+
+    # Port yönlendirme. Bilgisayarımızın 5432 portuna gelen istekleri, container'ın 5432 portuna yönlendirir.
+    # Bu sayede veritabanına bilgisayarımızdan doğrudan erişebiliriz. Format: 'HOST_PORTU:CONTAINER_PORTU'
+    ports:
+      - '5433:5432'
+
+    # Veri kalıcılığı için en önemli kısım. Bu olmazsa, container'ı sildiğimizde tüm verimiz kaybolur.
+    # 'postgres_data' adında bir volume (disk alanı) oluşturur ve bunu container içindeki postgres'in veri sakladığı
+    # ana klasöre (/var/lib/postgresql/data) bağlar.
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+# Yukarıda kullandığımız isimlendirilmiş volume'ü resmi olarak tanımlar.
+volumes:
+  postgres_data:
