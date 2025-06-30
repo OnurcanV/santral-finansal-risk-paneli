@@ -78,5 +78,3 @@ Makine Öğrenmesi ile KGÜP Önerileri: Geçmiş üretim, hava durumu ve piyasa
 Gelişmiş Senaryo Analizi: "Kötümser rüzgar", "yüksek fiyat" gibi farklı senaryoların finansal etkisini tek tıkla simüle etme.
 
 Kullanıcı Yönetimi ve Yetkilendirme: Çoklu kullanıcı desteği ve her kullanıcının sadece kendi santral verilerini görmesi.
-
-Gerçek Zamanlı Piyasa Verisi Entegrasyonu: EPİAŞ'ın şeffaflık platformundan PTF, SMF gibi verileri anlık olarak çekerek simülasyonları daha gerçekçi hale getirme.
