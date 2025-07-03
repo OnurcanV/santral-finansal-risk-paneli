@@ -1,147 +1,239 @@
-// Gerekli modülleri ve tipleri içeri aktarıyoruz.
-use crate::models::{InputSantral, Santral};
-use sqlx::PgPool;
-use uuid::Uuid;
-use crate::models::{KgupPlan, KgupPlanInput};
+//! Veritabanı erişim katmanı
+
+use crate::models::{
+    InputSantral, KgupPlan, KgupPlanInput, RegisterUserInput, Santral, User,
+};
+use argon2::{
+    password_hash::{rand_core::OsRng, PasswordHasher, SaltString},
+    Argon2,
+};
+use chrono::Utc;    
+use bigdecimal::BigDecimal;
 use serde_json::json;
+use sqlx::PgPool;
+use std::str::FromStr;
+use uuid::Uuid;
+
+fn bd(v: f64) -> BigDecimal {
+    BigDecimal::from_str(&v.to_string()).unwrap()
+}
+
+/* ---------- Kullanıcı ---------- */
+
+pub async fn register_user(pool: &PgPool, input: RegisterUserInput) -> Result<User, sqlx::Error> {
+    let salt = SaltString::generate(&mut OsRng);
+    let hashed = Argon2::default()
+        .hash_password(input.password.as_bytes(), &salt)
+        .map_err(|e| sqlx::Error::Protocol(e.to_string().into()))?
+        .to_string();
+
+    sqlx::query_as!(
+        User,
+        r#"
+        INSERT INTO kullanicilar (email, password_hash)
+        VALUES ($1, $2)
+        RETURNING
+            id                as "id!: Uuid",
+            email,
+            password_hash,
+            rol               as "rol!: String",
+            olusturma_tarihi  as "olusturma_tarihi!: chrono::DateTime<Utc>"
+        "#,
+        input.email.to_lowercase(),
+        hashed
+    )
+    .fetch_one(pool)
+    .await
+}
+
+pub async fn find_user_by_email(
+    pool: &PgPool,
+    email: String,
+) -> Result<Option<User>, sqlx::Error> {
+    sqlx::query_as!(
+        User,
+        r#"
+        SELECT
+            id                as "id!: Uuid",
+            email,
+            password_hash,
+            rol               as "rol!: String",
+            olusturma_tarihi  as "olusturma_tarihi!: chrono::DateTime<Utc>"
+        FROM kullanicilar
+        WHERE email = $1
+        "#,
+        email.to_lowercase()
+    )
+    .fetch_optional(pool)
+    .await
+}
+
+/* ---------- Santral CRUD ---------- */
 
 pub async fn create_santral(
     pool: &PgPool,
-    yeni_santral_data: InputSantral,
+    s: InputSantral,
+    uid: Uuid,
 ) -> Result<Santral, sqlx::Error> {
-    // sqlx::query_as! makrosu, sorguyu doğrudan bir string literali olarak bekler.
-    // Bu sayede derleme zamanında SQL sorgusunu ve tipleri kontrol edebilir.
-    let santral = sqlx::query_as!(
+    sqlx::query_as!(
         Santral,
-        // --- DEĞİŞİKLİK BURADA ---
-        // SQL sorgusunu bir değişkenden almak yerine doğrudan buraya yazıyoruz.
-        "
-        INSERT INTO santraller (id, ad, tip, kurulu_guc_mw, koordinat_enlem, koordinat_boylam)
+        r#"
+        INSERT INTO santraller
+            (ad, tip, kurulu_guc_mw, koordinat_enlem, koordinat_boylam, kullanici_id)
         VALUES ($1, $2, $3, $4, $5, $6)
-        RETURNING id, ad, tip, kurulu_guc_mw, koordinat_enlem, koordinat_boylam, olusturma_tarihi
-        ",
-        // --- DEĞİŞİKLİK SONU ---
-        Uuid::new_v4(),
-        yeni_santral_data.ad,
-        yeni_santral_data.tip,
-        yeni_santral_data.kurulu_guc_mw,
-        yeni_santral_data.koordinat_enlem,
-        yeni_santral_data.koordinat_boylam
+        RETURNING
+            id               as "id!: Uuid",
+            ad,
+            tip,
+            kurulu_guc_mw    as "kurulu_guc_mw!: BigDecimal",
+            koordinat_enlem  as "koordinat_enlem!: BigDecimal",
+            koordinat_boylam as "koordinat_boylam!: BigDecimal",
+            kullanici_id     as "kullanici_id!: Uuid",
+            olusturma_tarihi as "olusturma_tarihi!: chrono::DateTime<Utc>"
+        "#,
+        s.ad,
+        s.tip,
+        bd(s.kurulu_guc_mw),
+        bd(s.koordinat_enlem),
+        bd(s.koordinat_boylam),
+        uid
     )
     .fetch_one(pool)
-    .await?;
-
-    Ok(santral)
+    .await
 }
 
-// Veritabanındaki tüm santral kayıtlarını getiren yeni asenkron fonksiyonumuz.
-pub async fn get_all_santraller(pool: &PgPool) -> Result<Vec<Santral>, sqlx::Error> {
-    // query_as! makrosunu bu sefer SELECT sorgusu için kullanıyoruz.
-    let santraller = sqlx::query_as!(
+pub async fn get_all_santraller(pool: &PgPool, uid: Uuid) -> Result<Vec<Santral>, sqlx::Error> {
+    sqlx::query_as!(
         Santral,
-        // En son eklenenleri en üstte görmek için tarihe göre tersten sıralıyoruz.
-        "SELECT * FROM santraller ORDER BY olusturma_tarihi DESC"
+        r#"
+        SELECT
+            id               as "id!: Uuid",
+            ad,
+            tip,
+            kurulu_guc_mw    as "kurulu_guc_mw!: BigDecimal",
+            koordinat_enlem  as "koordinat_enlem!: BigDecimal",
+            koordinat_boylam as "koordinat_boylam!: BigDecimal",
+            kullanici_id     as "kullanici_id!: Uuid",
+            olusturma_tarihi as "olusturma_tarihi!: chrono::DateTime<Utc>"
+        FROM santraller
+        WHERE kullanici_id = $1
+        ORDER BY olusturma_tarihi DESC
+        "#,
+        uid
     )
-    // .fetch_one() yerine .fetch_all() kullanıyoruz.
-    // Bu, dönen TÜM satırları bir Vec<Santral> (Santral listesi) içine toplar.
     .fetch_all(pool)
-    .await?;
-
-    // Başarılı olursa, santral listesini Ok() içine sararak döndür.
-    Ok(santraller)
+    .await
 }
 
-// Belirtilen ID'ye sahip santrali veritabanından silen fonksiyon.
-pub async fn delete_santral_by_id(
+pub async fn get_santral_by_id(
     pool: &PgPool,
-    santral_id: Uuid,
-) -> Result<u64, sqlx::Error> {
-    // sqlx::query! makrosu, query_as!'a benzer ama sonucu bir struct'a dönüştürmez.
-    // Sadece sorguyu çalıştırmak ve etkilenen satır sayısı gibi bilgileri almak için idealdir.
-    let result = sqlx::query!(
-        "DELETE FROM santraller WHERE id = $1",
-        santral_id
+    id: Uuid,
+    uid: Uuid,
+) -> Result<Option<Santral>, sqlx::Error> {
+    sqlx::query_as!(
+        Santral,
+        r#"
+        SELECT
+            id               as "id!: Uuid",
+            ad,
+            tip,
+            kurulu_guc_mw    as "kurulu_guc_mw!: BigDecimal",
+            koordinat_enlem  as "koordinat_enlem!: BigDecimal",
+            koordinat_boylam as "koordinat_boylam!: BigDecimal",
+            kullanici_id     as "kullanici_id!: Uuid",
+            olusturma_tarihi as "olusturma_tarihi!: chrono::DateTime<Utc>"
+        FROM santraller
+        WHERE id = $1 AND kullanici_id = $2
+        "#,
+        id,
+        uid
     )
-    .execute(pool) // Sorguyu çalıştırır ama satır döndürmesini beklemez.
-    .await?;
-
-    // .rows_affected(), bu işlemden kaç satırın etkilendiğini (bizim durumumuzda silindiğini) döndürür.
-    // Başarılı bir silme işleminde bu değerin 1 olmasını bekleriz.
-    Ok(result.rows_affected())
+    .fetch_optional(pool)
+    .await
 }
 
-// Belirtilen ID'ye sahip santrali, verilen yeni bilgilerle güncelleyen fonksiyon.
 pub async fn update_santral_by_id(
     pool: &PgPool,
-    santral_id: Uuid,
-    // Güncelleme için de yeni santral oluştururken kullandığımız
-    // InputSantral struct'ını kullanabiliriz.
-    santral_data: InputSantral,
+    id: Uuid,
+    uid: Uuid,
+    s: InputSantral,
 ) -> Result<Santral, sqlx::Error> {
-    // Bu sefer query_as! makrosunu UPDATE sorgusu için kullanıyoruz.
-    let santral = sqlx::query_as!(
+    sqlx::query_as!(
         Santral,
-        // SQL'de UPDATE sorgusunun yapısı: UPDATE tablo ADI SET sütun1 = $1, ... WHERE id = $N
-        // RETURNING *; komutu, güncellenen satırın son halini bize geri döndürür.
-        "
-        UPDATE santraller 
-        SET ad = $1, tip = $2, kurulu_guc_mw = $3, koordinat_enlem = $4, koordinat_boylam = $5
-        WHERE id = $6
-        RETURNING *
-        ",
-        santral_data.ad,
-        santral_data.tip,
-        santral_data.kurulu_guc_mw,
-        santral_data.koordinat_enlem,
-        santral_data.koordinat_boylam,
-        santral_id
+        r#"
+        UPDATE santraller
+        SET ad = $1,
+            tip = $2,
+            kurulu_guc_mw = $3,
+            koordinat_enlem = $4,
+            koordinat_boylam = $5
+        WHERE id = $6 AND kullanici_id = $7
+        RETURNING
+            id               as "id!: Uuid",
+            ad,
+            tip,
+            kurulu_guc_mw    as "kurulu_guc_mw!: BigDecimal",
+            koordinat_enlem  as "koordinat_enlem!: BigDecimal",
+            koordinat_boylam as "koordinat_boylam!: BigDecimal",
+            kullanici_id     as "kullanici_id!: Uuid",
+            olusturma_tarihi as "olusturma_tarihi!: chrono::DateTime<Utc>"
+        "#,
+        s.ad,
+        s.tip,
+        bd(s.kurulu_guc_mw),
+        bd(s.koordinat_enlem),
+        bd(s.koordinat_boylam),
+        id,
+        uid
     )
-    // Güncelleme işlemi de tek bir satırı etkilemeli ve o tek satırı döndürmelidir.
     .fetch_one(pool)
-    .await?;
-
-    Ok(santral)
+    .await
 }
 
-// Verilen ID'ye göre tek bir santral getiren fonksiyon.
-pub async fn get_santral_by_id(pool: &PgPool, santral_id: Uuid) -> Result<Santral, sqlx::Error> {
-    let santral = sqlx::query_as!(
-        Santral,
-        // WHERE id = $1 şartı ile sadece o ID'ye sahip satırı seçiyoruz.
-        "SELECT * FROM santraller WHERE id = $1",
-        santral_id
+pub async fn delete_santral_by_id(pool: &PgPool, id: Uuid, uid: Uuid) -> Result<u64, sqlx::Error> {
+    Ok(sqlx::query!(
+        r#"DELETE FROM santraller WHERE id = $1 AND kullanici_id = $2"#,
+        id,
+        uid
     )
-    // Tek bir satır beklediğimiz için fetch_one() kullanıyoruz.
-    .fetch_one(pool)
-    .await?;
-
-    Ok(santral)
+    .execute(pool)
+    .await?
+    .rows_affected())
 }
-// Yeni bir KGÜP planı oluşturur veya o tarihe ait mevcut bir plan varsa onu günceller.
+
+/* ---------- KGÜP PLAN ---------- */
+
 pub async fn create_or_update_kgup_plan(
     pool: &PgPool,
     santral_id: Uuid,
-    plan_data: KgupPlanInput,
+    uid: Uuid,
+    plan: KgupPlanInput,
 ) -> Result<KgupPlan, sqlx::Error> {
-    
-    // Gelen f64 listesini, veritabanına yazmak için bir JSON Value'ya dönüştürüyoruz.
-    let saatlik_plan_json = json!(plan_data.saatlik_plan_mwh);
+    let json_plan = json!(plan.saatlik_plan_mwh);
 
-    let plan = sqlx::query_as!(
+    sqlx::query_as!(
         KgupPlan,
         r#"
-        INSERT INTO kgup_planlari (santral_id, plan_tarihi, saatlik_plan_mwh)
-        VALUES ($1, $2, $3)
-        ON CONFLICT (santral_id, plan_tarihi) 
-        DO UPDATE SET saatlik_plan_mwh = EXCLUDED.saatlik_plan_mwh
-        RETURNING *
+        INSERT INTO kgup_planlari
+            (santral_id, plan_tarihi, saatlik_plan_mwh, kullanici_id)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (santral_id, plan_tarihi)
+        DO UPDATE SET
+            saatlik_plan_mwh = EXCLUDED.saatlik_plan_mwh,
+            kullanici_id     = EXCLUDED.kullanici_id
+        RETURNING
+            id               as "id!: Uuid",
+            santral_id       as "santral_id!: Uuid",
+            plan_tarihi,
+            saatlik_plan_mwh,
+            kullanici_id     as "kullanici_id!: Uuid",
+            olusturma_tarihi as "olusturma_tarihi!: chrono::DateTime<Utc>"
         "#,
         santral_id,
-        plan_data.plan_tarihi,
-        saatlik_plan_json,
+        plan.plan_tarihi,
+        json_plan,
+        uid
     )
     .fetch_one(pool)
-    .await?;
-
-    Ok(plan)
+    .await
 }
