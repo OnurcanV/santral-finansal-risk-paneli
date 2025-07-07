@@ -130,6 +130,7 @@ pub struct KgupOutput {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TokenClaims {
     pub sub: Uuid,
+    pub email: String, // YENİ EKLENDİ
     pub rol: String,
     pub iat: i64,
     pub exp: i64,

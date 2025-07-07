@@ -1,53 +1,50 @@
-// frontend/src/app/page.tsx - Toast Bildirimleri Entegre Edilmiş
 'use client';
     
 import { useState, useEffect } from "react";
-// 1. Adım: toast'ı kütüphaneden import ediyoruz.
 import toast from "react-hot-toast"; 
 import SantralEkleForm from "@/components/SantralEkleForm";
 import SantralListesi from "@/components/SantralListesi";
 import { getSantraller, deleteSantral } from "@/services/santralApiService"; 
 import { Santral } from "@/types/santral";
+import withAuth from "@/components/withAuth";
+import { useAuth } from "@/context/AuthContext";
 
-export default function HomePage() {
+function HomePage() {
   const [santraller, setSantraller] = useState<Santral[]>([]);
   const [editingSantral, setEditingSantral] = useState<Santral | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const { token } = useAuth();
 
   const fetchSantraller = async () => {
+    setIsLoading(true);
     try {
       const data = await getSantraller();
       setSantraller(data);
     } catch (error) {
       console.error("Santraller yüklenemedi:", error);
-      // 2. Adım: Hata durumunda kullanıcıya toast bildirimi gösteriyoruz.
-      toast.error("Santraller listesi yüklenirken bir hata oluştu.");
-      setSantraller([]); 
+      toast.error("Santral verileri getirilemedi. Lütfen tekrar giriş yapmayı deneyin.");
     } finally {
       setIsLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchSantraller();
-  }, []);
+    // Sadece token varsa veri çekme işlemini başlat.
+    if (token) {
+        fetchSantraller();
+    }
+  }, [token]);
 
   const handleSantralSilindi = async (id: string) => {
     const santralToDelete = santraller.find(s => s.id === id);
     if (!santralToDelete) return;
 
-    const confirmationMessage = `'${santralToDelete.ad} ${santralToDelete.tip}' adlı santrali silmek istediğinizden emin misiniz?`;
-    
-    // window.confirm() kullanıcıdan onay almak için hala iyi bir yöntemdir.
-    if (window.confirm(confirmationMessage)) {
+    if (window.confirm(`'${santralToDelete.ad} ${santralToDelete.tip}' adlı santrali silmek istediğinizden emin misiniz?`)) {
         try {
             await deleteSantral(id);
-            const successMessage = `'${santralToDelete.ad} ${santralToDelete.tip}' başarıyla silindi.`;
-            // 3. Adım: alert() yerine toast.success() kullanıyoruz.
-            toast.success(successMessage);
-            fetchSantraller(); 
+            toast.success(`'${santralToDelete.ad} ${santralToDelete.tip}' başarıyla silindi.`);
+            fetchSantraller();
         } catch (error) {
-            // 4. Adım: alert() yerine toast.error() kullanıyoruz.
             toast.error("Hata: Santral silinemedi.");
         }
     }
@@ -84,3 +81,5 @@ export default function HomePage() {
     </main>
   );
 }
+
+export default withAuth(HomePage);

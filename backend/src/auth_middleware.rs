@@ -1,45 +1,39 @@
-use actix_web::{dev::Payload, error::ErrorUnauthorized, http::header, FromRequest, HttpRequest};
-use futures::future::{ready, Ready};
+use actix_web::{dev::Payload, Error as ActixError, FromRequest, HttpRequest};
+use std::future::{ready, Ready};
+use crate::models::TokenClaims;
 use jsonwebtoken::{decode, DecodingKey, Validation};
 use std::env;
-use uuid::Uuid;
 
-use crate::models::TokenClaims;
-
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct AuthUser {
-    pub id: Uuid,
+    pub id: uuid::Uuid,
     pub rol: String,
 }
 
 impl FromRequest for AuthUser {
-    type Error = actix_web::Error;
+    type Error = ActixError;
     type Future = Ready<Result<Self, Self::Error>>;
 
     fn from_request(req: &HttpRequest, _: &mut Payload) -> Self::Future {
-        let bearer = req
-            .headers()
-            .get(header::AUTHORIZATION)
-            .and_then(|h| h.to_str().ok())
-            .and_then(|s| s.strip_prefix("Bearer "))
-            .map(String::from);
-
-        let token = match bearer {
-            Some(t) => t,
-            None => return ready(Err(ErrorUnauthorized("Bearer token eksik"))),
-        };
-
-        let secret = env::var("JWT_SECRET").expect("JWT_SECRET tanımlı değil");
-        match decode::<TokenClaims>(
-            &token,
-            &DecodingKey::from_secret(secret.as_ref()),
-            &Validation::default(),
-        ) {
-            Ok(data) => ready(Ok(AuthUser {
-                id: data.claims.sub,
-                rol: data.claims.rol,
-            })),
-            Err(_) => ready(Err(ErrorUnauthorized("Geçersiz token"))),
+        if let Some(auth_header) = req.headers().get("Authorization") {
+            if let Ok(auth_str) = auth_header.to_str() {
+                if auth_str.starts_with("Bearer ") {
+                    let token = &auth_str[7..];
+                    let secret = env::var("JWT_SECRET").unwrap_or_else(|_| "default_secret".to_string());
+                    
+                    if let Ok(token_data) = decode::<TokenClaims>(
+                        token,
+                        &DecodingKey::from_secret(secret.as_ref()),
+                        &Validation::default(),
+                    ) {
+                        return ready(Ok(AuthUser {
+                            id: token_data.claims.sub,
+                            rol: token_data.claims.rol,
+                        }));
+                    }
+                }
+            }
         }
+        ready(Err(actix_web::error::ErrorUnauthorized("Geçersiz veya eksik token.")))
     }
 }

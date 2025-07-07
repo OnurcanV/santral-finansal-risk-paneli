@@ -54,6 +54,7 @@ pub async fn login_user_handler(
     let now = Utc::now();
     let claims = TokenClaims {
         sub: user.id,
+        email: user.email.clone(), // YENİ EKLENDİ
         rol: user.rol.clone(),
         iat: now.timestamp(),
         exp: (now + Duration::days(7)).timestamp(),
