@@ -1,42 +1,39 @@
-// backend/src/main.rs - FİNAL VERSİYONU (Loglama Eklenmiş)
+// backend/src/main.rs - AUTH ENTEGRE FİNAL
 
-// Gerekli tüm kütüphanelerimizi ve modüllerimizi çağırıyoruz.
 use actix_cors::Cors;
-// Logger middleware'ini ve log kütüphanesini import ediyoruz.
-use actix_web::{App, HttpServer, middleware::Logger, web};
+use actix_web::{middleware::Logger, web, App, HttpServer};
 use sqlx::postgres::PgPoolOptions;
 use std::env;
 
-// Kendi oluşturduğumuz modülleri projeye dahil ediyoruz.
+pub mod auth;      // JWT + şifre yardımcıları
+pub mod auth_mw;   // Bearer extractor
 pub mod db;
 pub mod handlers;
 mod models;
 
-// Main fonksiyonumuz, tüm uygulamanın başlangıç noktası.
+use crate::auth::AuthConfig;
+
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    // .env dosyasını yükleyerek ortam değişkenlerine erişim sağlıyoruz.
+    // .env yükle
     dotenvy::dotenv().ok();
 
-    // --- YENİ EKLENEN KISIM: Loglama sistemini başlatıyoruz. ---
-    // RUST_LOG ortam değişkenine göre log seviyesini ayarlar.
-    // Eğer değişken ayarlı değilse, varsayılan olarak 'actix_web=info' seviyesinde log tutar.
+    // log
     env_logger::init_from_env(env_logger::Env::new().default_filter_or("actix_web=info"));
-    // --- YENİ EKLENEN KISIM SONU ---
 
-    // DATABASE_URL'i ortamdan okuyoruz.
-    let database_url = env::var("DATABASE_URL").expect("DATABASE_URL ortam değişkeni bulunamadı.");
-
-    // Veritabanı bağlantı havuzunu (pool) oluşturuyoruz.
+    // DB bağlan
+    let database_url = env::var("DATABASE_URL").expect("DATABASE_URL ortam değişkeni yok.");
     let pool = PgPoolOptions::new()
         .max_connections(5)
         .connect(&database_url)
         .await
-        .expect("Veritabanı bağlantısı başarısız oldu.");
+        .expect("Veritabanı bağlantısı başarısız.");
+
+    // Auth config
+    let auth_cfg = AuthConfig::from_env().expect("AuthConfig env okunamadı");
 
     println!("🚀 Sunucu http://127.0.0.1:8080 adresinde başlatılıyor...");
 
-    // HTTP sunucusunu kurup başlatıyoruz.
     HttpServer::new(move || {
         let cors = Cors::default()
             .allowed_origin("http://localhost:3000")
@@ -44,17 +41,18 @@ async fn main() -> std::io::Result<()> {
             .allow_any_header()
             .max_age(3600);
 
-        // Actix uygulamamızı oluşturuyoruz.
         App::new()
             .wrap(cors)
-            // --- YENİ EKLENEN KISIM: Logger'ı bir middleware olarak ekliyoruz ---
-            // %a: IP Adresi, %r: İstek satırı, %s: Cevap status kodu, %b: Cevap boyutu, %T: Süre
             .wrap(Logger::new(
                 "%a \"%r\" %s %b \"%{Referer}i\" \"%{User-Agent}i\" %T s",
             ))
-            // --- YENİ EKLENEN KISIM SONU ---
+            // paylaşılan havuz & auth cfg
             .app_data(web::Data::new(pool.clone()))
-            // Handler'larımızı servis olarak kaydediyoruz.
+            .app_data(web::Data::new(auth_cfg.clone()))
+            // --- AUTH ---
+            .route("/auth/login", web::post().to(handlers::login_handler))
+            .route("/auth/whoami", web::get().to(handlers::whoami))
+            // --- SANTRAL / DİĞER ---
             .service(handlers::create_santral_handler)
             .service(handlers::get_all_santraller_handler)
             .service(handlers::delete_santral_handler)
