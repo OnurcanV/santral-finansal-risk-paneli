@@ -2,15 +2,15 @@
 
 // Gerekli olan her şeyi içeri aktarıyoruz.
 // actix_web'den: web (uygulama durumu ve JSON için), HttpResponse (cevap oluşturmak için), Responder (cevap döndürebilmek için), post (routing macro'su için)
-use actix_web::{delete, get, put, web, HttpResponse, Responder, post};
+use actix_web::{HttpResponse, Responder, delete, get, post, put, web};
 // sqlx'ten: Veritabanı bağlantı havuzu tipimiz
 use sqlx::PgPool;
 // Kendi modüllerimizden: Girdi modeli ve veritabanı fonksiyonu
-use crate::models::InputSantral;
 use crate::db;
-use uuid::Uuid; // Uuid tipini de burada kullanacağız.
+use crate::models::InputSantral;
+use crate::models::KgupPlanInput;
 use crate::models::{DengesizlikInput, DengesizlikOutput}; // Yeni modelleri import et
-use crate::models::{KgupPlanInput}; // Yeni modeli import et
+use uuid::Uuid; // Uuid tipini de burada kullanacağız. // Yeni modeli import et
 
 // #[post("/api/santral")] macro'su, bu fonksiyonun sadece '/api/santral' adresine
 // gelen HTTP POST isteklerini dinleyeceğini Actix-web'e bildirir.
@@ -18,7 +18,7 @@ use crate::models::{KgupPlanInput}; // Yeni modeli import et
 pub async fn create_santral_handler(
     // pool ve yeni_santral "Extractor" olarak adlandırılır.
     // Actix-web'e, gelen istekten bu verileri bizim için "çıkarmasını" söylerler.
-    
+
     // pool: Uygulama durumu olarak paylaşılan veritabanı bağlantı havuzunu ister.
     pool: web::Data<PgPool>,
     // yeni_santral: İsteğin body'sindeki JSON'u otomatik olarak InputSantral struct'ına dönüştürmesini ister.
@@ -50,9 +50,7 @@ pub async fn create_santral_handler(
 
 // #[get(...)] macro'su bu fonksiyonun GET isteklerini dinleyeceğini belirtir.
 #[get("/api/santraller")]
-pub async fn get_all_santraller_handler(
-    pool: web::Data<PgPool>,
-) -> impl Responder {
+pub async fn get_all_santraller_handler(pool: web::Data<PgPool>) -> impl Responder {
     // db modülümüzdeki yeni fonksiyonu çağırıyoruz.
     match db::get_all_santraller(pool.get_ref()).await {
         // Başarılı olursa, santral listesini JSON olarak ve 200 OK status koduyla döndür.
@@ -86,7 +84,8 @@ pub async fn delete_santral_handler(
                 HttpResponse::Ok().json(serde_json::json!({"status": "success", "message": "Santral başarıyla silindi."}))
             } else {
                 // ...eğer 0 satır etkilendiyse, o ID'ye sahip bir santral bulunamamıştır.
-                HttpResponse::NotFound().json(serde_json::json!({"status": "error", "message": "Santral bulunamadı."}))
+                HttpResponse::NotFound()
+                    .json(serde_json::json!({"status": "error", "message": "Santral bulunamadı."}))
             }
         }
         // Eğer db fonksiyonu hata döndürürse...
@@ -128,9 +127,8 @@ pub async fn get_santral_by_id_handler(
         Ok(santral) => HttpResponse::Ok().json(santral),
         // Eğer sqlx::Error::RowNotFound hatası dönerse, bu o ID'de bir santral olmadığını gösterir.
         // Bu durumda 404 Not Found cevabı dönmek daha doğrudur.
-        Err(sqlx::Error::RowNotFound) => {
-            HttpResponse::NotFound().json(serde_json::json!({"status": "error", "message": "Santral bulunamadı."}))
-        }
+        Err(sqlx::Error::RowNotFound) => HttpResponse::NotFound()
+            .json(serde_json::json!({"status": "error", "message": "Santral bulunamadı."})),
         Err(e) => {
             eprintln!("Santral getirilirken hata oluştu: {:?}", e);
             HttpResponse::InternalServerError().finish()
@@ -142,7 +140,6 @@ pub async fn get_santral_by_id_handler(
 pub async fn dengesizlik_hesapla_handler(
     inputs: web::Json<Vec<DengesizlikInput>>,
 ) -> impl Responder {
-    
     let outputs: Vec<DengesizlikOutput> = inputs.iter().map(|input| {
         // ... hesaplama mantığı aynı kalıyor ...
         let dengesizlik_miktari = input.gerceklesen_uretim_mwh - input.tahmini_uretim_mwh;
@@ -164,7 +161,7 @@ pub async fn dengesizlik_hesapla_handler(
             dengesizlik_tipi = "Dengede".to_string();
             aciklama = "Santral üretim tahmini ile tam dengededir.".to_string();
         }
-        
+
         // --- DEĞİŞİKLİK BURADA ---
         // Artık sadece sonuçları değil, orijinal girdileri de içeren yeni struct'ımızı oluşturuyoruz.
         DengesizlikOutput {
@@ -179,8 +176,8 @@ pub async fn dengesizlik_hesapla_handler(
             dengesizlik_tutari_tl: dengesizlik_tutari,
             aciklama,
         }
-    }).collect(); 
-    
+    }).collect();
+
     HttpResponse::Ok().json(outputs)
 }
 
@@ -190,7 +187,9 @@ pub async fn create_or_update_kgup_plan_handler(
     id: web::Path<Uuid>,
     plan_input: web::Json<KgupPlanInput>,
 ) -> impl Responder {
-    match db::create_or_update_kgup_plan(pool.get_ref(), id.into_inner(), plan_input.into_inner()).await {
+    match db::create_or_update_kgup_plan(pool.get_ref(), id.into_inner(), plan_input.into_inner())
+        .await
+    {
         Ok(plan) => HttpResponse::Ok().json(plan),
         Err(e) => {
             eprintln!("KGÜP Planı kaydedilirken hata oluştu: {:?}", e);
