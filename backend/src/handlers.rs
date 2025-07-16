@@ -123,11 +123,13 @@ pub async fn whoami(user: AuthenticatedUser) -> HttpResponse {
 #[post("/api/santral")]
 pub async fn create_santral_handler(
     pool: web::Data<PgPool>,
+    user: AuthenticatedUser,
     yeni_santral: web::Json<InputSantral>,
 ) -> impl Responder {
-    let santral_data = yeni_santral.into_inner();
+    let data = yeni_santral.into_inner();
+    let musteri_id = user.musteri_id; // admin de kendi default musteri'sine ekliyor (şimdilik)
 
-    match db::create_santral(pool.get_ref(), santral_data).await {
+    match db::create_santral_for_musteri(pool.get_ref(), musteri_id, data).await {
         Ok(santral) => HttpResponse::Ok().json(santral),
         Err(e) => {
             eprintln!("Santral oluşturulurken hata oluştu: {:?}", e);
@@ -137,12 +139,25 @@ pub async fn create_santral_handler(
 }
 
 #[get("/api/santraller")]
-pub async fn get_all_santraller_handler(pool: web::Data<PgPool>) -> impl Responder {
-    match db::get_all_santraller(pool.get_ref()).await {
-        Ok(santraller) => HttpResponse::Ok().json(santraller),
-        Err(e) => {
-            eprintln!("Santraller listelenirken hata oluştu: {:?}", e);
-            HttpResponse::InternalServerError().finish()
+pub async fn get_all_santraller_handler(
+    pool: web::Data<PgPool>,
+    user: AuthenticatedUser,
+) -> impl Responder {
+    if user.rol == "admin" {
+        match db::get_all_santraller(pool.get_ref()).await {
+            Ok(santraller) => HttpResponse::Ok().json(santraller),
+            Err(e) => {
+                eprintln!("Santraller listelenirken hata oluştu: {:?}", e);
+                HttpResponse::InternalServerError().finish()
+            }
+        }
+    } else {
+        match db::get_santraller_by_musteri(pool.get_ref(), user.musteri_id).await {
+            Ok(santraller) => HttpResponse::Ok().json(santraller),
+            Err(e) => {
+                eprintln!("Müşteri santralleri listelenirken hata oluştu: {:?}", e);
+                HttpResponse::InternalServerError().finish()
+            }
         }
     }
 }

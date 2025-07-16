@@ -186,3 +186,73 @@ pub async fn create_or_update_kgup_plan(
 
     Ok(plan)
 }
+
+
+/// Belirli bir müşteriye santral ekle.
+pub async fn create_santral_for_musteri(
+    pool: &PgPool,
+    musteri_id: Uuid,
+    data: InputSantral,
+) -> Result<Santral, sqlx::Error> {
+    let new_id = Uuid::new_v4();
+    sqlx::query_as!(
+        Santral,
+        r#"
+        INSERT INTO santraller (
+            id,
+            ad,
+            tip,
+            kurulu_guc_mw,
+            koordinat_enlem,
+            koordinat_boylam,
+            musteri_id
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        RETURNING
+            id,
+            ad,
+            tip,
+            kurulu_guc_mw,
+            koordinat_enlem,
+            koordinat_boylam,
+            musteri_id,
+            olusturma_tarihi
+        "#,
+        new_id,
+        data.ad,
+        data.tip,
+        data.kurulu_guc_mw,
+        data.koordinat_enlem,
+        data.koordinat_boylam,
+        musteri_id
+    )
+    .fetch_one(pool)
+    .await
+}
+
+/// Belirli müşterinin santralleri.
+pub async fn get_santraller_by_musteri(
+    pool: &PgPool,
+    musteri_id: Uuid,
+) -> Result<Vec<Santral>, sqlx::Error> {
+    sqlx::query_as!(
+        Santral,
+        r#"
+        SELECT
+            id,
+            ad,
+            tip,
+            kurulu_guc_mw,
+            koordinat_enlem,
+            koordinat_boylam,
+            musteri_id,
+            olusturma_tarihi
+        FROM santraller
+        WHERE musteri_id = $1
+        ORDER BY olusturma_tarihi DESC
+        "#,
+        musteri_id
+    )
+    .fetch_all(pool)
+    .await
+}
