@@ -256,3 +256,24 @@ pub async fn get_santraller_by_musteri(
     .fetch_all(pool)
     .await
 }
+
+/// Bu santral verilen musteri_id'ye mi ait?
+pub async fn santral_belongs_to_musteri(
+    pool: &PgPool,
+    santral_id: Uuid,
+    musteri_id: Uuid,
+) -> Result<bool, sqlx::Error> {
+    let rec = sqlx::query_scalar!(
+        r#"
+        SELECT EXISTS(
+            SELECT 1 FROM santraller
+            WHERE id = $1 AND musteri_id = $2
+        ) AS "exists!"
+        "#,
+        santral_id,
+        musteri_id
+    )
+    .fetch_one(pool)
+    .await?;
+    Ok(rec)
+}

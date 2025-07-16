@@ -163,25 +163,47 @@ pub async fn get_all_santraller_handler(
 }
 
 #[delete("/api/santral/{id}")]
-pub async fn delete_santral_handler(pool: web::Data<PgPool>, id: web::Path<Uuid>) -> impl Responder {
-    let santral_id_to_delete = id.into_inner();
+pub async fn delete_santral_handler(
+    pool: web::Data<PgPool>,
+    user: AuthenticatedUser,
+    id: web::Path<Uuid>,
+) -> impl Responder {
+    let santral_id = id.into_inner();
 
-    match db::delete_santral_by_id(pool.get_ref(), santral_id_to_delete).await {
-        Ok(rows_affected) => {
-            if rows_affected > 0 {
-                HttpResponse::Ok().json(serde_json::json!({
-                    "status": "success",
-                    "message": "Santral başarıyla silindi."
-                }))
-            } else {
-                HttpResponse::NotFound().json(serde_json::json!({
-                    "status": "error",
-                    "message": "Santral bulunamadı."
-                }))
+    // admin → doğrudan sil
+    if user.rol == "admin" {
+        match db::delete_santral_by_id(pool.get_ref(), santral_id).await {
+            Ok(rows) if rows > 0 => {
+                return HttpResponse::Ok().json(serde_json::json!({"status":"success"}));
+            }
+            Ok(_) => {
+                return HttpResponse::NotFound().json(serde_json::json!({"status":"error","message":"Santral bulunamadı."}));
+            }
+            Err(e) => {
+                eprintln!("Santral sil hata: {e:?}");
+                return HttpResponse::InternalServerError().finish();
             }
         }
+    }
+
+    // user → sahiplik kontrolü
+    match db::santral_belongs_to_musteri(pool.get_ref(), santral_id, user.musteri_id).await {
+        Ok(true) => {}
+        Ok(false) => {
+            return HttpResponse::Forbidden().json(serde_json::json!({"status":"error","message":"Yetkin yok."}));
+        }
         Err(e) => {
-            eprintln!("Santral silinirken hata oluştu: {:?}", e);
+            eprintln!("Sahiplik kontrol hata: {e:?}");
+            return HttpResponse::InternalServerError().finish();
+        }
+    }
+
+    // sahip → sil
+    match db::delete_santral_by_id(pool.get_ref(), santral_id).await {
+        Ok(rows) if rows > 0 => HttpResponse::Ok().json(serde_json::json!({"status":"success"})),
+        Ok(_) => HttpResponse::NotFound().json(serde_json::json!({"status":"error","message":"Santral bulunamadı."})),
+        Err(e) => {
+            eprintln!("Santral sil hata: {e:?}");
             HttpResponse::InternalServerError().finish()
         }
     }
@@ -190,16 +212,31 @@ pub async fn delete_santral_handler(pool: web::Data<PgPool>, id: web::Path<Uuid>
 #[put("/api/santral/{id}")]
 pub async fn update_santral_handler(
     pool: web::Data<PgPool>,
+    user: AuthenticatedUser,
     id: web::Path<Uuid>,
     santral_data: web::Json<InputSantral>,
 ) -> impl Responder {
-    let santral_id_to_update = id.into_inner();
-    let data_to_update = santral_data.into_inner();
+    let santral_id = id.into_inner();
 
-    match db::update_santral_by_id(pool.get_ref(), santral_id_to_update, data_to_update).await {
-        Ok(updated_santral) => HttpResponse::Ok().json(updated_santral),
+    if user.rol != "admin" {
+        match db::santral_belongs_to_musteri(pool.get_ref(), santral_id, user.musteri_id).await {
+            Ok(true) => {}
+            Ok(false) => {
+                return HttpResponse::Forbidden().json(serde_json::json!({"status":"error","message":"Yetkin yok."}));
+            }
+            Err(e) => {
+                eprintln!("Sahiplik kontrol hata: {e:?}");
+                return HttpResponse::InternalServerError().finish();
+            }
+        }
+    }
+
+    let data = santral_data.into_inner();
+    match db::update_santral_by_id(pool.get_ref(), santral_id, data).await {
+        Ok(santral) => HttpResponse::Ok().json(santral),
+        Err(sqlx::Error::RowNotFound) => HttpResponse::NotFound().json(serde_json::json!({"status":"error","message":"Santral bulunamadı."})),
         Err(e) => {
-            eprintln!("Santral güncellenirken hata oluştu: {:?}", e);
+            eprintln!("Update santral hata: {e:?}");
             HttpResponse::InternalServerError().finish()
         }
     }
@@ -208,21 +245,34 @@ pub async fn update_santral_handler(
 #[get("/api/santral/{id}")]
 pub async fn get_santral_by_id_handler(
     pool: web::Data<PgPool>,
+    user: AuthenticatedUser,
     id: web::Path<Uuid>,
 ) -> impl Responder {
-    let santral_id_to_fetch = id.into_inner();
-    match db::get_santral_by_id(pool.get_ref(), santral_id_to_fetch).await {
+    let santral_id = id.into_inner();
+
+    if user.rol != "admin" {
+        match db::santral_belongs_to_musteri(pool.get_ref(), santral_id, user.musteri_id).await {
+            Ok(true) => {}
+            Ok(false) => {
+                return HttpResponse::Forbidden().json(serde_json::json!({"status":"error","message":"Yetkin yok."}));
+            }
+            Err(e) => {
+                eprintln!("Sahiplik kontrol hata: {e:?}");
+                return HttpResponse::InternalServerError().finish();
+            }
+        }
+    }
+
+    match db::get_santral_by_id(pool.get_ref(), santral_id).await {
         Ok(santral) => HttpResponse::Ok().json(santral),
-        Err(sqlx::Error::RowNotFound) => HttpResponse::NotFound().json(serde_json::json!({
-            "status": "error",
-            "message": "Santral bulunamadı."
-        })),
+        Err(sqlx::Error::RowNotFound) => HttpResponse::NotFound().json(serde_json::json!({"status":"error","message":"Santral bulunamadı."})),
         Err(e) => {
-            eprintln!("Santral getirilirken hata oluştu: {:?}", e);
+            eprintln!("Get santral hata: {e:?}");
             HttpResponse::InternalServerError().finish()
         }
     }
 }
+
 
 // -----------------------------------------------------------------------------
 // DENGESİZLİK HESAPLAMA
@@ -288,12 +338,26 @@ pub async fn dengesizlik_hesapla_handler(
 #[post("/api/santral/{id}/kgupplan")]
 pub async fn create_or_update_kgup_plan_handler(
     pool: web::Data<PgPool>,
+    user: AuthenticatedUser,
     id: web::Path<Uuid>,
     plan_input: web::Json<KgupPlanInput>,
 ) -> impl Responder {
-    match db::create_or_update_kgup_plan(pool.get_ref(), id.into_inner(), plan_input.into_inner())
-        .await
-    {
+    let santral_id = id.into_inner();
+
+    if user.rol != "admin" {
+        match db::santral_belongs_to_musteri(pool.get_ref(), santral_id, user.musteri_id).await {
+            Ok(true) => {}
+            Ok(false) => {
+                return HttpResponse::Forbidden().json(serde_json::json!({"status":"error","message":"Yetkin yok."}));
+            }
+            Err(e) => {
+                eprintln!("Sahiplik kontrol hata: {e:?}");
+                return HttpResponse::InternalServerError().finish();
+            }
+        }
+    }
+
+    match db::create_or_update_kgup_plan(pool.get_ref(), santral_id, plan_input.into_inner()).await {
         Ok(plan) => HttpResponse::Ok().json(plan),
         Err(e) => {
             eprintln!("KGÜP Planı kaydedilirken hata oluştu: {:?}", e);
@@ -301,3 +365,4 @@ pub async fn create_or_update_kgup_plan_handler(
         }
     }
 }
+
