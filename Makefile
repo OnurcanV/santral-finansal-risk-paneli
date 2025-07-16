@@ -1,12 +1,12 @@
 .PHONY: fmt lint build backend frontend up down
 fmt:
-	cargo fmt --all
+	cd backend && cargo fmt --all
 
 lint:
-	cargo clippy --all-targets --all-features -- -D warnings || true
+	cd backend && cargo clippy --all-targets --all-features -- -D warnings || true
 
 build:
-	cargo build --workspace
+	cd backend && cargo build
 
 backend:
 	cd backend && cargo run
