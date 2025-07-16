@@ -1,11 +1,11 @@
-// backend/src/db.rs
-
-use crate::models::{InputSantral, Santral, KgupPlan, KgupPlanInput};
+use crate::models::{InputSantral, KgupPlan, KgupPlanInput, Santral};
 use serde_json::json;
 use sqlx::PgPool;
 use uuid::Uuid;
 
 /// Yeni santral oluşturur ve kaydı döndürür.
+///
+/// Şimdilik musteri_id NULL kalabilir (portföy entegrasyonu sonraki aşama).
 pub async fn create_santral(
     pool: &PgPool,
     yeni_santral_data: InputSantral,
@@ -31,6 +31,7 @@ pub async fn create_santral(
             kurulu_guc_mw,
             koordinat_enlem,
             koordinat_boylam,
+            musteri_id,
             olusturma_tarihi
         "#,
         new_id,
@@ -58,6 +59,7 @@ pub async fn get_all_santraller(pool: &PgPool) -> Result<Vec<Santral>, sqlx::Err
             kurulu_guc_mw,
             koordinat_enlem,
             koordinat_boylam,
+            musteri_id,
             olusturma_tarihi
         FROM santraller
         ORDER BY olusturma_tarihi DESC
@@ -70,10 +72,7 @@ pub async fn get_all_santraller(pool: &PgPool) -> Result<Vec<Santral>, sqlx::Err
 }
 
 /// Belirli santrali siler; etkilenen satır sayısını döndürür (1 beklenir).
-pub async fn delete_santral_by_id(
-    pool: &PgPool,
-    santral_id: Uuid,
-) -> Result<u64, sqlx::Error> {
+pub async fn delete_santral_by_id(pool: &PgPool, santral_id: Uuid) -> Result<u64, sqlx::Error> {
     let result = sqlx::query!(
         r#"DELETE FROM santraller WHERE id = $1"#,
         santral_id
@@ -108,6 +107,7 @@ pub async fn update_santral_by_id(
             kurulu_guc_mw,
             koordinat_enlem,
             koordinat_boylam,
+            musteri_id,
             olusturma_tarihi
         "#,
         santral_data.ad,
@@ -124,10 +124,7 @@ pub async fn update_santral_by_id(
 }
 
 /// ID ile tek santral getirir.
-pub async fn get_santral_by_id(
-    pool: &PgPool,
-    santral_id: Uuid,
-) -> Result<Santral, sqlx::Error> {
+pub async fn get_santral_by_id(pool: &PgPool, santral_id: Uuid) -> Result<Santral, sqlx::Error> {
     let santral = sqlx::query_as!(
         Santral,
         r#"
@@ -138,6 +135,7 @@ pub async fn get_santral_by_id(
             kurulu_guc_mw,
             koordinat_enlem,
             koordinat_boylam,
+            musteri_id,
             olusturma_tarihi
         FROM santraller
         WHERE id = $1
