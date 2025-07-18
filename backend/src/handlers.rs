@@ -10,6 +10,8 @@
 use actix_web::{delete, get, post, put, web, Error, HttpResponse, Responder};
 use sqlx::PgPool;
 use uuid::Uuid;
+use chrono::NaiveDate;
+use crate::models::SapmaGunResponse;
 
 use crate::db;
 use crate::models::{
@@ -366,3 +368,220 @@ pub async fn create_or_update_kgup_plan_handler(
     }
 }
 
+#[derive(Debug, serde::Deserialize)]
+pub struct SapmaQuery {
+    pub gun: Option<String>, // YYYY-MM-DD (opsiyonel; yoksa bugün UTC)
+}
+
+// -----------------------------------------------------------------------------
+// SAPMA (Plan vs Gerçekleşen) - Gün Bazlı Saatlik
+// -----------------------------------------------------------------------------
+// GET /api/santral/{id}/sapma/{gun}
+// örn: /api/santral/ab3d.../sapma/2025-07-17
+//
+// Yetki:
+//   - admin: istediği santrali sorabilir
+//   - user : sadece kendi portföyündeki santrali sorabilir
+#[get("/api/santral/{id}/sapma/{gun}")]
+pub async fn sapma_gun_handler(
+    pool: web::Data<PgPool>,
+    user: AuthenticatedUser,           // bearer -> musteri_id, rol
+    path: web::Path<(Uuid, String)>,   // (santral_id, gun_str)
+) -> Result<HttpResponse, Error> {
+    let (santral_id, gun_str) = path.into_inner();
+
+    // Tarih parse
+    let gun = match chrono::NaiveDate::parse_from_str(&gun_str, "%Y-%m-%d") {
+        Ok(d) => d,
+        Err(_) => {
+            return Ok(HttpResponse::BadRequest().body("Tarih formatı YYYY-MM-DD olmalı."));
+        }
+    };
+
+    // user ise santral sahiplik kontrolü
+    if user.rol != "admin" {
+        match db::santral_belongs_to_musteri(pool.get_ref(), santral_id, user.musteri_id).await {
+            Ok(true) => {}
+            Ok(false) => {
+                return Ok(HttpResponse::Forbidden().body("Bu santrale erişim yetkin yok."));
+            }
+            Err(e) => {
+                log::error!("sahiplik kontrol hata: {e}");
+                return Ok(HttpResponse::InternalServerError().finish());
+            }
+        }
+    }
+
+    // Veriyi çek
+    let rows = match db::sapma_saatlik_gun(pool.get_ref(), santral_id, gun).await {
+        Ok(r) => r,
+        Err(e) => {
+            log::error!("sapma_saatlik_gun DB hata: {e}");
+            return Ok(HttpResponse::InternalServerError().finish());
+        }
+    };
+
+    // Toplamlar + MAPE
+    let mut toplam_plan = 0.0_f64;
+    let mut toplam_gercek = 0.0_f64;
+    let mut toplam_abs = 0.0_f64;
+    let mut has_plan = false;
+    let mut has_gercek = false;
+
+    for r in &rows {
+        if let Some(p) = r.plan_mwh {
+            toplam_plan += p;
+            has_plan = true;
+        }
+        if let Some(g) = r.gercek_mwh {
+            toplam_gercek += g;
+            has_gercek = true;
+        }
+        if let (Some(p), Some(g)) = (r.plan_mwh, r.gercek_mwh) {
+            if p > 0.0 {
+                toplam_abs += (p - g).abs();
+            }
+        }
+    }
+
+    let toplam_sapma = if has_plan && has_gercek {
+        Some(toplam_gercek - toplam_plan)
+    } else {
+        None
+    };
+
+    let mape_yaklasik = if toplam_plan > 0.0 {
+        Some(toplam_abs / toplam_plan)
+    } else {
+        None
+    };
+
+    let resp = SapmaGunResponse {
+        santral_id,
+        gun,
+        rows,
+        toplam_plan_mwh: if has_plan { Some(toplam_plan) } else { None },
+        toplam_gercek_mwh: if has_gercek { Some(toplam_gercek) } else { None },
+        toplam_sapma_mwh: toplam_sapma,
+        mape_yaklasik,
+    };
+
+    Ok(HttpResponse::Ok().json(resp))
+}
+
+#[get("/api/santral/{id}/tarihsel")]
+pub async fn plan_gercek_tarihsel_handler(
+    pool: web::Data<PgPool>,
+    user: AuthenticatedUser,
+    path: web::Path<Uuid>,
+    q: web::Query<std::collections::HashMap<String,String>>,
+) -> HttpResponse {
+    let santral_id = path.into_inner();
+
+    // User yetki kontrolü (admin her şeyi görür; user sadece kendi)
+    if user.rol != "admin" {
+        match db::santral_belongs_to_musteri(pool.get_ref(), santral_id, user.musteri_id).await {
+            Ok(true) => {}
+            Ok(false) => {
+                return HttpResponse::Forbidden().body("Yetkin yok.");
+            }
+            Err(e) => {
+                eprintln!("sahiplik kontrolü hata: {e}");
+                return HttpResponse::InternalServerError().finish();
+            }
+        }
+    }
+
+    // Paramları çek
+    let start_str = q.get("start").map(String::as_str).unwrap_or_else(|| {
+        // default: bugün
+        // TR timezone’a girmiyoruz; UTC date
+        let today = chrono::Utc::now().date_naive();
+        Box::leak(Box::new(today.to_string()))
+    });
+    let end_str = q.get("end").map(String::as_str).unwrap_or(start_str); // yoksa tek gün
+
+    // parse
+    let start = match chrono::NaiveDate::parse_from_str(start_str, "%Y-%m-%d") {
+        Ok(d) => d,
+        Err(_) => return HttpResponse::BadRequest().body("start format YYYY-MM-DD olmalı"),
+    };
+    let mut end = match chrono::NaiveDate::parse_from_str(end_str, "%Y-%m-%d") {
+        Ok(d) => d,
+        Err(_) => return HttpResponse::BadRequest().body("end format YYYY-MM-DD olmalı"),
+    };
+    if end <= start {
+        // tek gün durumu: end = start + 1
+        end = start.succ_opt().unwrap_or(start);
+    }
+
+    // limit (örnek: max 31 gün)
+    if (end - start).num_days() > 31 {
+        return HttpResponse::BadRequest().body("Tarih aralığı 31 günden uzun olamaz.");
+    }
+
+    // DB çağrısı
+    let rows = match db::plan_gercek_aralik(pool.get_ref(), santral_id, start, end).await {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("plan_gercek_aralik DB hata: {e}");
+            return HttpResponse::InternalServerError().finish();
+        }
+    };
+
+    // Agrega
+    let mut toplam_plan = 0.0;
+    let mut toplam_gercek = 0.0;
+    let mut toplam_sapma = 0.0;
+
+    let mut mape_num = 0.0; // Σ |plan-actual|
+    let mut mape_den = 0.0; // Σ plan (plan>0 & actual mevcut)
+
+    let mut out_rows = Vec::with_capacity(rows.len());
+
+    for (ts, plan, gercek) in rows {
+        let sapma_opt = match (plan, gercek) {
+            (Some(p), Some(a)) => {
+                toplam_plan += p;
+                toplam_gercek += a;
+                toplam_sapma += a - p;
+                mape_num += (a - p).abs();
+                if p > 0.0 {
+                    mape_den += p;
+                }
+                Some(a - p)
+            }
+            (Some(p), None) => {
+                toplam_plan += p;
+                None
+            }
+            (None, Some(a)) => {
+                toplam_gercek += a;
+                None
+            }
+            (None, None) => None,
+        };
+
+        out_rows.push(crate::models::PlanGercekSaat {
+            ts_utc: ts,
+            plan_mwh: plan,
+            gercek_mwh: gercek,
+            sapma_mwh: sapma_opt,
+        });
+    }
+
+    let mape = if mape_den > 0.0 { Some(mape_num / mape_den) } else { None };
+
+    let resp = crate::models::PlanGercekResponse {
+        santral_id,
+        start,
+        end,
+        rows: out_rows,
+        toplam_plan_mwh: Some(toplam_plan),
+        toplam_gercek_mwh: Some(toplam_gercek),
+        toplam_sapma_mwh: Some(toplam_sapma),
+        mape_yaklasik: mape,
+    };
+
+    HttpResponse::Ok().json(resp)
+}

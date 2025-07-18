@@ -1,5 +1,1 @@
-{
-  "/page": "app/page.js",
-  "/santral/[id]/planlama/page": "app/santral/[id]/planlama/page.js",
-  "/santral/[id]/analiz/page": "app/santral/[id]/analiz/page.js"
-}
+{}

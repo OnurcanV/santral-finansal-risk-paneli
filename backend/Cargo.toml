@@ -20,3 +20,6 @@ password-hash = "0.5"   # genellikle argon2 ile gelir ama açık eklemek iyi
 futures = "0.3"
 jsonwebtoken = "9"
 anyhow = "1"
+actix-web-actors = "4"
+actix = "0.13"
+urlencoding = "2"

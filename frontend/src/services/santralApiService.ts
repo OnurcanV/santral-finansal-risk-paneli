@@ -1,183 +1,115 @@
 // frontend/src/services/santralApiService.ts
+//
+// Backend API çağrılarını tek noktada topluyoruz.
+// Tüm istekler apiFetch() üzerinden gider; token otomatik eklenir.
 
-// Dengesizlik simülasyonu için girdi tipi
+import type { AuthSession } from '@/types/auth';
+import type { Santral, InputSantral } from '@/types/santral';
+import { apiFetch } from '@/lib/api';
+
+/* ---------------- DENGESİZLİK ---------------- */
+
 export type DengesizlikInput = {
-    tahmini_uretim_mwh: number;
-    gerceklesen_uretim_mwh: number;
-    ptf_tl: number;
-    smf_tl: number;
+  tahmini_uretim_mwh: number;
+  gerceklesen_uretim_mwh: number;
+  ptf_tl: number;
+  smf_tl: number;
 };
 
-// Dengesizlik simülasyonu için çıktı tipi
 export type DengesizlikOutput = {
-    dengesizlik_miktari_mwh: number;
-    dengesizlik_tipi: string;
-    dengesizlik_tutari_tl: number;
-    aciklama: string;
+  tahmini_uretim_mwh: number;
+  gerceklesen_uretim_mwh: number;
+  ptf_tl: number;
+  smf_tl: number;
+  dengesizlik_miktari_mwh: number;
+  dengesizlik_tipi: string;
+  dengesizlik_tutari_tl: number;
+  aciklama: string;
 };
 
-// Göndereceğimiz verinin tipini TypeScript ile tanımlıyoruz.
-// Bu, Rust backend'imizdeki InputSantral struct'ı ile eşleşmelidir.
-type SantralInput = {
-    ad: string;
-    tip: string;
-    kurulu_guc_mw: string; // DEĞİŞTİ
-    koordinat_enlem: string; // DEĞİŞTİ
-    koordinat_boylam: string; // DEĞİŞTİ
-};
+/** Tekli veya toplu dengesizlik hesabı (backend dizi bekliyor). */
+export async function hesaplaDengesizlik(
+  inputs: DengesizlikInput[] | DengesizlikInput,
+  session?: AuthSession | null
+): Promise<DengesizlikOutput[]> {
+  const body = Array.isArray(inputs) ? inputs : [inputs];
+  return await apiFetch<DengesizlikOutput[]>(
+    '/api/hesapla/dengesizlik',
+    { method: 'POST', body: JSON.stringify(body) },
+    session
+  );
+}
 
-// Rust backend'imizin çalıştığı adres.
-const API_URL = 'http://localhost:8080/api';
+/* ---------------- SANTRAL CRUD ---------------- */
 
-// Yeni bir santral oluşturmak için API isteği gönderen asenkron fonksiyonumuz.
-export const createSantral = async (santralData: SantralInput) => {
-    try {
-        // Tarayıcının yerleşik 'fetch' fonksiyonu ile POST isteği gönderiyoruz.
-        const response = await fetch(`${API_URL}/santral`, {
-            method: 'POST',
-            headers: {
-                // Gönderdiğimiz verinin JSON formatında olduğunu sunucuya bildiriyoruz.
-                'Content-Type': 'application/json',
-            },
-            // JavaScript objemizi, ağ üzerinden göndermek için JSON metnine çeviriyoruz.
-            body: JSON.stringify(santralData),
-        });
+/** Yeni santral oluştur. */
+export async function createSantral(
+  data: InputSantral,
+  session?: AuthSession | null
+): Promise<Santral> {
+  return await apiFetch<Santral>(
+    '/api/santral',
+    { method: 'POST', body: JSON.stringify(data) },
+    session
+  );
+}
 
-        // Eğer sunucudan gelen cevap "başarılı" değilse (örn: 500 Internal Server Error),
-        // bir hata fırlatarak 'catch' bloğunun çalışmasını sağlıyoruz.
-        if (!response.ok) {
-            throw new Error(`HTTP hatası! Durum: ${response.status}`);
-        }
+/** Santrallerimi getir. */
+export async function getSantraller(
+  session?: AuthSession | null
+): Promise<Santral[]> {
+  return await apiFetch<Santral[]>('/api/santraller', {}, session);
+}
 
-        // Sunucudan gelen JSON cevabını (yeni oluşturulan santral verisi) işle ve geri döndür.
-        return await response.json();
+/** Tek santral detayı. */
+export async function getSantralById(
+  id: string,
+  session?: AuthSession | null
+): Promise<Santral> {
+  return await apiFetch<Santral>(`/api/santral/${id}`, {}, session);
+}
 
-    } catch (error) {
-        console.error("Santral oluşturulurken API servisinde hata oluştu:", error);
-        // Hatayı, onu çağıran component'in de yakalayabilmesi için tekrar fırlatıyoruz.
-        throw error;
-    }
-};
+/** Santral güncelle. */
+export async function updateSantral(
+  id: string,
+  data: InputSantral,
+  session?: AuthSession | null
+): Promise<Santral> {
+  return await apiFetch<Santral>(
+    `/api/santral/${id}`,
+    { method: 'PUT', body: JSON.stringify(data) },
+    session
+  );
+}
 
-// Tüm santralleri getiren yeni fonksiyon
-export const getSantraller = async () => {
-    try {
-        // Bu bir GET isteği olduğu için method, headers veya body belirtmemize gerek yok.
-        const response = await fetch(`${API_URL}/santraller`);
+/** Santral sil. */
+export async function deleteSantral(
+  id: string,
+  session?: AuthSession | null
+): Promise<{ status: string; message: string }> {
+  return await apiFetch<{ status: string; message: string }>(
+    `/api/santral/${id}`,
+    { method: 'DELETE' },
+    session
+  );
+}
 
-        if (!response.ok) {
-            throw new Error(`HTTP hatası! Durum: ${response.status}`);
-        }
-        return await response.json();
-    } catch (error) {
-        console.error("Santraller getirilirken API servisinde hata oluştu:", error);
-        throw error;
-    }
-};
+/* ---------------- KGÜP ---------------- */
 
-// Belirtilen ID'ye sahip santrali silen yeni fonksiyon
-export const deleteSantral = async (id: string) => {
-    try {
-        // Bu sefer DELETE metodunu kullanıyoruz ve ID'yi URL'in sonuna ekliyoruz.
-        const response = await fetch(`${API_URL}/santral/${id}`, {
-            method: 'DELETE',
-        });
+export interface KgupPlanInput {
+  plan_tarihi: string;          // YYYY-MM-DD
+  saatlik_plan_mwh: number[];   // 24 saat
+}
 
-        if (!response.ok) {
-            throw new Error(`HTTP hatası! Durum: ${response.status}`);
-        }
-
-        // Backend'den gelen başarı mesajını JSON olarak işleyip döndürüyoruz.
-        return await response.json();
-
-    } catch (error) {
-        console.error(`${id} ID'li santral silinirken hata oluştu:`, error);
-        throw error;
-    }
-};
-
-// Belirtilen ID'ye sahip santrali, verilen yeni verilerle güncelleyen fonksiyon
-export const updateSantral = async (id: string, santralData: SantralInput) => {
-    try {
-        // PUT metodu ile isteğimizi gönderiyoruz.
-        const response = await fetch(`${API_URL}/santral/${id}`, {
-            method: 'PUT',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(santralData),
-        });
-
-        if (!response.ok) {
-            throw new Error(`HTTP hatası! Durum: ${response.status}`);
-        }
-        return await response.json();
-    } catch (error) {
-        console.error(`${id} ID'li santral güncellenirken hata oluştu:`, error);
-        throw error;
-    }
-};
-
-
-// ID'si verilen tek bir santrali getiren fonksiyon
-export const getSantralById = async (id: string) => {
-    try {
-        const response = await fetch(`${API_URL}/santral/${id}`);
-        if (!response.ok) {
-            // Eğer sunucu 404 gibi bir hata dönerse, burada yakalıyoruz.
-            throw new Error(`HTTP hatası! Durum: ${response.status}`);
-        }
-        return await response.json();
-    } catch (error) {
-        console.error(`${id} ID'li santral getirilirken hata oluştu:`, error);
-        throw error;
-    }
-};
-
-// Dengesizlik maliyetini hesaplamak için backend'e istek gönderen fonksiyon
-export const hesaplaDengesizlik = async (inputData: DengesizlikInput) => {
-    try {
-        const response = await fetch(`${API_URL}/hesapla/dengesizlik`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(inputData),
-        });
-        if (!response.ok) {
-            throw new Error(`HTTP hatası! Durum: ${response.status}`);
-        }
-        return await response.json();
-    } catch (error) {
-        console.error("Dengesizlik hesaplanırken hata oluştu:", error);
-        throw error;
-    }
-};
-
-// KGÜP Planı'nın backend'e gönderileceği veri tipi.
-// Rust'taki KgupPlanInput struct'ımızla eşleşiyor.
-export type KgupPlanInput = {
-    plan_tarihi: string; // "YYYY-MM-DD" formatında
-    saatlik_plan_mwh: number[];
-};
-
-// Yeni bir KGÜP planı kaydeder veya mevcut olanı günceller.
-export const saveKgupPlan = async (santralId: string, planData: KgupPlanInput) => {
-    try {
-        const response = await fetch(`${API_URL}/santral/${santralId}/kgupplan`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(planData),
-        });
-
-        if (!response.ok) {
-            throw new Error(`HTTP hatası! Durum: ${response.status}`);
-        }
-        return await response.json();
-    } catch (error) {
-        console.error("KGÜP Planı kaydedilirken hata oluştu:", error);
-        throw error;
-    }
-};
+/** KGÜP planı kaydet/güncelle. */
+export async function saveKgupPlan(
+  santralId: string,
+  plan: KgupPlanInput,
+  session?: AuthSession | null
+) {
+  return await apiFetch(
+    `/api/santral/${santralId}/kgupplan`,
+    { method: 'POST', body: JSON.stringify(plan) },
+    session
+  );
+}

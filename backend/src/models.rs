@@ -84,3 +84,45 @@ pub struct Kullanici {
     pub aktif: bool,
     pub olusturma_tarihi: DateTime<Utc>,
 }
+
+#[derive(Debug, serde::Serialize)]
+pub struct SapmaSaat {
+    pub saat: i32,                    // 0..23
+    pub saat_ts: chrono::DateTime<chrono::Utc>,
+    pub plan_mwh: Option<f64>,
+    pub gercek_mwh: Option<f64>,
+    pub sapma_mwh: Option<f64>,
+    pub sapma_oran: Option<f64>,
+}
+
+/// Gün bazlı sapma cevabı (API response).
+#[derive(Debug, serde::Serialize)]
+pub struct SapmaGunResponse {
+    pub santral_id: uuid::Uuid,
+    pub gun: chrono::NaiveDate,
+    pub rows: Vec<SapmaSaat>,
+    pub toplam_plan_mwh: Option<f64>,
+    pub toplam_gercek_mwh: Option<f64>,
+    pub toplam_sapma_mwh: Option<f64>,
+    pub mape_yaklasik: Option<f64>,   // Σ |plan-actual| / Σ plan  (plan>0)
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct PlanGercekSaat {
+    pub ts_utc: chrono::DateTime<chrono::Utc>,
+    pub plan_mwh: Option<f64>,
+    pub gercek_mwh: Option<f64>,
+    pub sapma_mwh: Option<f64>,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct PlanGercekResponse {
+    pub santral_id: uuid::Uuid,
+    pub start: chrono::NaiveDate,
+    pub end: chrono::NaiveDate, // exclusive
+    pub rows: Vec<PlanGercekSaat>,
+    pub toplam_plan_mwh: Option<f64>,
+    pub toplam_gercek_mwh: Option<f64>,
+    pub toplam_sapma_mwh: Option<f64>,
+    pub mape_yaklasik: Option<f64>,
+}
