@@ -1,1 +1,8 @@
+<<<<<<< HEAD
 {}
+=======
+{
+  "/_not-found/page": "app/_not-found/page.js",
+  "/page": "app/page.js"
+}
+>>>>>>> ac6ae1aab7b9915e4d91c0e28a19794566b4096e

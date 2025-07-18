@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from "react";
+<<<<<<< HEAD
 import toast from "react-hot-toast";
 import SantralEkleForm from "@/components/SantralEkleForm";
 import SantralListesi from "@/components/SantralListesi";
@@ -11,29 +12,53 @@ import Link from "next/link";
 
 export default function HomePage() {
   const { session } = useAuth();  // HeaderBar'daki Çıkış'ı kullanıyoruz; burada logout gerekmez.
+=======
+import toast from "react-hot-toast"; 
+import SantralEkleForm from "@/components/SantralEkleForm";
+import SantralListesi from "@/components/SantralListesi";
+import { getSantraller, deleteSantral } from "@/services/santralApiService"; 
+import { Santral } from "@/types/santral";
+import withAuth from "@/components/withAuth";
+import { useAuth } from "@/context/AuthContext";
+
+function HomePage() {
+>>>>>>> ac6ae1aab7b9915e4d91c0e28a19794566b4096e
   const [santraller, setSantraller] = useState<Santral[]>([]);
   const [editingSantral, setEditingSantral] = useState<Santral | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const { token } = useAuth();
 
+<<<<<<< HEAD
   async function fetchSantraller() {
     if (!session) {
       setSantraller([]);
       setIsLoading(false);
       return;
     }
+=======
+  const fetchSantraller = async () => {
+    setIsLoading(true);
+>>>>>>> ac6ae1aab7b9915e4d91c0e28a19794566b4096e
     try {
       const data = await getSantraller(session);
       setSantraller(data);
+<<<<<<< HEAD
     } catch (err) {
       console.error(err);
       toast.error("Santraller yüklenemedi.");
       setSantraller([]);
+=======
+    } catch (error) {
+      console.error("Santraller yüklenemedi:", error);
+      toast.error("Santral verileri getirilemedi. Lütfen tekrar giriş yapmayı deneyin.");
+>>>>>>> ac6ae1aab7b9915e4d91c0e28a19794566b4096e
     } finally {
       setIsLoading(false);
     }
   }
 
   useEffect(() => {
+<<<<<<< HEAD
     fetchSantraller();
     // session token değiştiğinde yeniden yükle
   }, [session?.token]);
@@ -42,6 +67,26 @@ export default function HomePage() {
     if (!session) {
       toast.error("Giriş yapmalısın.");
       return;
+=======
+    // Sadece token varsa veri çekme işlemini başlat.
+    if (token) {
+        fetchSantraller();
+    }
+  }, [token]);
+
+  const handleSantralSilindi = async (id: string) => {
+    const santralToDelete = santraller.find(s => s.id === id);
+    if (!santralToDelete) return;
+
+    if (window.confirm(`'${santralToDelete.ad} ${santralToDelete.tip}' adlı santrali silmek istediğinizden emin misiniz?`)) {
+        try {
+            await deleteSantral(id);
+            toast.success(`'${santralToDelete.ad} ${santralToDelete.tip}' başarıyla silindi.`);
+            fetchSantraller();
+        } catch (error) {
+            toast.error("Hata: Santral silinemedi.");
+        }
+>>>>>>> ac6ae1aab7b9915e4d91c0e28a19794566b4096e
     }
     const s = santraller.find((x) => x.id === id);
     if (!s) return;
@@ -100,3 +145,5 @@ export default function HomePage() {
     </main>
   );
 }
+
+export default withAuth(HomePage);

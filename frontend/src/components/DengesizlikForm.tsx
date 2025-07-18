@@ -28,9 +28,8 @@ export default function DengesizlikForm({ onHesaplama }: Props) {
         e.preventDefault();
         setIsLoading(true); // Hesaplama başlarken butonu pasif yapmak için
         try {
-            // DEĞİŞİKLİK 1: Tek objemizi bir köşeli parantez içine alarak
-            // onu tek elemanlı bir diziye (listeye) dönüştürüyoruz.
-            const results = await hesaplaDengesizlik([input]);
+            // Tek objemizi doğrudan gönderiyoruz.
+            const results = await hesaplaDengesizlik(input);
 
             // DEĞİŞİKLİK 2: Backend artık her zaman bir dizi döndüreceği için,
             // dönen dizinin boş olmadığından ve ilk elemanının var olduğundan emin oluyoruz.
