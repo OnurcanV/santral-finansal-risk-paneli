@@ -15,3 +15,9 @@ cat > .gitignore <<'EOF'
 .idea/
 .vscode/
 EOF
+
+# Next.js build
+frontend/.next/
+frontend/out/
+
+backend/plan.json
