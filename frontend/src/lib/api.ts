@@ -1,11 +1,13 @@
+// --- 1. DOSYA: frontend/src/lib/api.ts ---
+// DÜZELTME: Bu dosya, backend'e "gizli talimatı" (X-Impersonate-Musteri-ID)
+// gönderecek şekilde güncellendi.
+
 import type { AuthSession } from "@/types/auth";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8080";
 
-/**
- * LocalStorage key under which we store session.
- */
 const AUTH_KEY = "auth_session";
+const IMPERSONATION_KEY = "impersonated_musteri_id"; // YENİ: Gizli talimat için anahtar
 
 /** Load session from localStorage (browser only). */
 export function loadSession(): AuthSession | null {
@@ -32,6 +34,7 @@ export function saveSession(session: AuthSession | null) {
 /**
  * Wrapper around fetch that automatically prefixes backend API URL
  * and attaches Authorization header if session present.
+ * YENİ YETENEK: Eğer admin kimliğe bürünüyorsa, gizli talimat başlığını ekler.
  */
 export async function apiFetch<T = unknown>(
   path: string,
@@ -40,16 +43,26 @@ export async function apiFetch<T = unknown>(
 ): Promise<T> {
   const url = path.startsWith("http") ? path : `${API_BASE}${path}`;
   const headers = new Headers(opts.headers ?? {});
+  
   const s = session ?? loadSession();
   if (s?.token) {
     headers.set("Authorization", `Bearer ${s.token}`);
   }
+
+  // --- YENİ GİZLİ TALİMAT MANTIĞI ---
+  if (typeof window !== "undefined") {
+      const impersonatedId = window.localStorage.getItem(IMPERSONATION_KEY);
+      // Sadece admin bir müşteriye büründüyse bu başlığı ekle
+      if (s?.rol === 'admin' && impersonatedId) {
+          headers.set("X-Impersonate-Musteri-ID", impersonatedId);
+      }
+  }
+
   if (!headers.has("Content-Type") && !(opts.body instanceof FormData)) {
     headers.set("Content-Type", "application/json");
   }
   const res = await fetch(url, { ...opts, headers });
   if (!res.ok) {
-    // try to parse error json
     let msg = res.statusText;
     try {
       const data = await res.json();
@@ -57,12 +70,11 @@ export async function apiFetch<T = unknown>(
     } catch (_) {}
     throw new Error(`API ${res.status}: ${msg}`);
   }
-  // 204 No Content?
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
 }
 
-/** Convenience: login */
+// ... apiLogin fonksiyonu aynı kalır ...
 export interface LoginResponse {
   access_token: string;
   user_id: string;

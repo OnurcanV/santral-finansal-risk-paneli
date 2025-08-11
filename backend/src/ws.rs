@@ -1,121 +1,44 @@
-// backend/src/ws.rs  (debug broadcast loglu)
-//
-// WebSocket bağlantıları: UretimWs
-// Amaç: JWT ile doğrula, musteri_id bağla, ping/pong, echo, hoş geldin mesajı,
-// ve (Gün 8) periyodik portföy üretim yayını.
-//
-// Yayın formatı örneği:
-// {
-//   "type": "uretim_tick",
-//   "musteri_id": "...",
-//   "santraller": [...],
-//   "portfoy_toplam_mw": 123.4,
-//   "portfoy_kurulu_mw": 250.0,
-//   "portfoy_oran": 0.494
-// }
+// Dosya: backend/src/ws.rs
+// BU DOSYAYI TAMAMEN DEĞİŞTİRİN
 
 use std::time::{Duration, Instant};
 
-use actix::{fut, Actor, ActorContext, AsyncContext, StreamHandler, ActorFutureExt};
-use actix_web::{self, web, Error, HttpRequest, HttpResponse};
+use actix::{Actor, ActorContext, AsyncContext, Handler, StreamHandler};
+use actix_web::{web, Error, HttpRequest, HttpResponse};
 use actix_web_actors::ws;
-use actix_web_actors::ws::{Message as WsMessage, ProtocolError};
+use tokio::sync::broadcast::Receiver;
 use uuid::Uuid;
 
-use bigdecimal::ToPrimitive;
-use serde_json::json;
+use crate::auth::{decode_jwt, AuthConfig}; // <-- YENİ
+use crate::auth_mw::AuthenticatedUser;
+use crate::broadcast::UretimBroadcastMessage;
 
-use crate::auth::{self, AuthConfig};
-use crate::db;
-use sqlx::PgPool;
-
-// --- zamanlama sabitleri ---
-const HEARTBEAT_INTERVAL: Duration   = Duration::from_secs(5); // ping sıklığı
-const CLIENT_TIMEOUT: Duration       = Duration::from_secs(10); // pong gelmezse kopar
-const BROADCAST_INTERVAL: Duration   = Duration::from_secs(5); // üretim yayını periyodu
+const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
+const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub struct UretimWs {
     pub musteri_id: Uuid,
     hb: Instant,
-    pool: PgPool,
+    rx: Receiver<UretimBroadcastMessage>,
 }
 
 impl UretimWs {
-    pub fn new(musteri_id: Uuid, pool: PgPool) -> Self {
+    pub fn new(musteri_id: Uuid, rx: Receiver<UretimBroadcastMessage>) -> Self {
         Self {
             musteri_id,
             hb: Instant::now(),
-            pool,
+            rx,
         }
     }
 
-    /// Sunucudan düzenli ping gönder + timeout kontrolü.
     fn start_heartbeat(&self, ctx: &mut ws::WebsocketContext<Self>) {
         ctx.run_interval(HEARTBEAT_INTERVAL, |act, ctx| {
             if Instant::now().duration_since(act.hb) > CLIENT_TIMEOUT {
-                println!("[WS] musteri_id={} -> bağlantı zaman aşımı, kapanıyor.", act.musteri_id);
+                log::info!("[WS] Müşteri {} için bağlantı zaman aşımı, kapanıyor.", act.musteri_id);
                 ctx.stop();
                 return;
             }
-            ctx.ping(b"ping");
-        });
-    }
-
-    /// Periyodik üretim yayını.
-    fn start_broadcast(&self, ctx: &mut ws::WebsocketContext<Self>) {
-        ctx.run_interval(BROADCAST_INTERVAL, |act, ctx| {
-            println!("[WS] broadcast tick -> mus={}", act.musteri_id);
-
-            let pool = act.pool.clone();
-            let mus  = act.musteri_id;
-
-            // async DB çağrısını actor context'te future olarak sar
-            ctx.spawn(
-                fut::wrap_future(async move {
-                    db::get_son_uretimler_by_musteri(&pool, mus).await
-                })
-                .map(move |res, _act, ctx: &mut ws::WebsocketContext<UretimWs>| {
-                    match res {
-                        Ok(rows) => {
-                            println!("[WS] broadcast DB ok ({} rows) mus={}", rows.len(), mus);
-
-                            let mut top_kurulu = 0f64;
-                            let mut top_mw     = 0f64;
-                            let mut list = Vec::with_capacity(rows.len());
-
-                            for r in rows {
-                                let k_mw = r.kurulu_guc_mw.to_f64().unwrap_or(0.0);
-                                top_kurulu += k_mw;
-                                if let Some(mw) = r.son_mw {
-                                    top_mw += mw;
-                                }
-                                list.push(json!({
-                                    "id": r.id,
-                                    "ad": r.ad,
-                                    "kurulu_guc_mw": r.kurulu_guc_mw.to_string(),
-                                    "son_mw": r.son_mw,
-                                    "son_ts": r.son_ts.map(|ts| ts.to_rfc3339()),
-                                }));
-                            }
-
-                            let oran = if top_kurulu > 0.0 { top_mw / top_kurulu } else { 0.0 };
-
-                            let payload = json!({
-                                "type": "uretim_tick",
-                                "musteri_id": mus,
-                                "santraller": list,
-                                "portfoy_toplam_mw": top_mw,
-                                "portfoy_kurulu_mw": top_kurulu,
-                                "portfoy_oran": oran,
-                            });
-                            ctx.text(payload.to_string());
-                        }
-                        Err(e) => {
-                            eprintln!("[WS] broadcast DB ERROR mus={}: {e}", mus);
-                        }
-                    }
-                }),
-            );
+            ctx.ping(b"");
         });
     }
 }
@@ -124,115 +47,107 @@ impl Actor for UretimWs {
     type Context = ws::WebsocketContext<Self>;
 
     fn started(&mut self, ctx: &mut Self::Context) {
+        log::info!("[WS] Müşteri {} için WebSocket bağlantısı başlatıldı.", self.musteri_id);
         self.start_heartbeat(ctx);
-        self.start_broadcast(ctx);
 
-        // hoş geldin mesajı
-        let welcome = json!({
-            "type": "welcome",
-            "musteri_id": self.musteri_id,
-            "msg": "WebSocket bağlantısı kuruldu."
-        });
-        ctx.text(welcome.to_string());
+        let mut rx = self.rx.resubscribe();
+        let musteri_id = self.musteri_id;
+        let addr = ctx.address();
+
+        ctx.spawn(
+            actix::fut::wrap_future::<_, Self>(async move {
+                loop {
+                    match rx.recv().await {
+                        Ok(msg) => {
+                            if msg.musteri_id == musteri_id {
+                                addr.do_send(msg);
+                            }
+                        }
+                        Err(e) => {
+                            log::error!("[WS] Broadcast alıcı hatası: {}. Dinleyici görev sonlandırılıyor.", e);
+                            break;
+                        }
+                    }
+                }
+            })
+        );
     }
 }
 
-impl StreamHandler<Result<WsMessage, ProtocolError>> for UretimWs {
-    fn handle(&mut self, msg: Result<WsMessage, ProtocolError>, ctx: &mut Self::Context) {
+impl Handler<UretimBroadcastMessage> for UretimWs {
+    type Result = ();
+
+    fn handle(&mut self, msg: UretimBroadcastMessage, ctx: &mut Self::Context) {
+        log::trace!("[WS] Müşteri {} için yayın mesajı gönderiliyor: Santral {}", self.musteri_id, msg.santral_ad);
+        ctx.text(serde_json::to_string(&msg).unwrap_or_default());
+    }
+}
+
+impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for UretimWs {
+    fn handle(&mut self, msg: Result<ws::Message, ws::ProtocolError>, ctx: &mut Self::Context) {
         match msg {
-            Ok(WsMessage::Ping(msg)) => {
+            Ok(ws::Message::Ping(msg)) => {
                 self.hb = Instant::now();
                 ctx.pong(&msg);
             }
-            Ok(WsMessage::Pong(_)) => {
+            Ok(ws::Message::Pong(_)) => {
                 self.hb = Instant::now();
             }
-            Ok(WsMessage::Text(txt)) => {
-                // echo (debug)
-                let echo_payload = json!({
-                    "type": "echo",
-                    "musteri_id": self.musteri_id,
-                    "recv": txt.to_string(),
-                });
-                ctx.text(echo_payload.to_string());
-            }
-            Ok(WsMessage::Binary(bin)) => {
-                ctx.binary(bin);
-            }
-            Ok(WsMessage::Close(reason)) => {
+            Ok(ws::Message::Close(reason)) => {
                 ctx.close(reason);
                 ctx.stop();
             }
-            _ => {}
+            _ => (),
         }
     }
 }
 
-/// Query string'den ?token= al.
-fn extract_token_from_query(req: &HttpRequest) -> Option<String> {
-    req.query_string().split('&').find_map(|kv| {
-        let mut it = kv.splitn(2, '=');
-        let k = it.next()?;
-        let v = it.next()?;
-        if k == "token" {
-            Some(urlencoding::decode(v).ok()?.to_string())
-        } else {
-            None
-        }
-    })
-}
-
-/// Token'ı doğrula -> musteri_id dön.
-fn auth_from_req(req: &HttpRequest) -> Result<Uuid, String> {
-    // 1) query ?token=
-    if let Some(tok) = extract_token_from_query(req) {
-        return decode_token_to_musteri(&tok);
-    }
-
-    // 2) Authorization: Bearer ...
-    if let Some(hv) = req.headers().get(actix_web::http::header::AUTHORIZATION) {
-        if let Ok(s) = hv.to_str() {
-            if let Some(rest) = s.strip_prefix("Bearer ") {
-                return decode_token_to_musteri(rest.trim());
+/// Gelen isteğin query parametresinden veya Authorization başlığından token'ı çıkarır.
+fn get_user_from_req(req: &HttpRequest, auth_cfg: &AuthConfig) -> Result<AuthenticatedUser, Error> {
+    // 1. Authorization: Bearer <token> başlığını dene
+    if let Some(auth_header) = req.headers().get("Authorization") {
+        if let Ok(auth_str) = auth_header.to_str() {
+            if let Some(token) = auth_str.strip_prefix("Bearer ") {
+                return decode_jwt(auth_cfg, token)
+                    .map(|data| AuthenticatedUser {
+                        user_id: data.claims.sub,
+                        musteri_id: data.claims.mus,
+                        rol: data.claims.rol,
+                    })
+                    .map_err(|_| actix_web::error::ErrorUnauthorized("invalid_token_header"));
             }
         }
     }
 
-    Err("Token bulunamadı.".into())
+    // 2. ?token=<token> query parametresini dene
+    if let Some(token_str) = req.query_string().split("token=").nth(1) {
+        if let Ok(token) = urlencoding::decode(token_str) {
+            return decode_jwt(auth_cfg, &token)
+                .map(|data| AuthenticatedUser {
+                    user_id: data.claims.sub,
+                    musteri_id: data.claims.mus,
+                    rol: data.claims.rol,
+                })
+                .map_err(|_| actix_web::error::ErrorUnauthorized("invalid_token_query"));
+        }
+    }
+    
+    Err(actix_web::error::ErrorUnauthorized("missing_token"))
 }
 
-/// JWT çöz → musteri_id.
-fn decode_token_to_musteri(token: &str) -> Result<Uuid, String> {
-    let secret = std::env::var("JWT_SECRET").map_err(|_| "JWT_SECRET env yok.".to_string())?;
-
-    // decode_jwt(cfg, token) -- secret lazım
-    let cfg = AuthConfig {
-        jwt_secret: secret,
-        jwt_exp_hours: 24, // decode için önemli değil
-    };
-
-    let token_data = auth::decode_jwt(&cfg, token).map_err(|e| format!("JWT hata: {e}"))?;
-    let claims = token_data.claims;
-    Ok(claims.mus) // mus zaten Uuid
-}
-
-/// WebSocket handshake handler.
-/// route: GET /ws/uretim
+/// WebSocket bağlantı isteğini işleyen ana handler.
+/// DÜZELTME: Artık AuthenticatedUser'ı doğrudan almıyor, onun yerine isteğin kendisinden
+/// manuel olarak çıkarıyoruz. Bu, hem header hem de query param ile doğrulamaya izin verir.
 pub async fn ws_uretim_route(
     req: HttpRequest,
     stream: web::Payload,
-    pool: web::Data<PgPool>,
+    auth_cfg: web::Data<AuthConfig>,
+    tx: web::Data<tokio::sync::broadcast::Sender<UretimBroadcastMessage>>,
 ) -> Result<HttpResponse, Error> {
-    // token doğrula
-    let musteri_id = match auth_from_req(&req) {
-        Ok(id) => id,
-        Err(msg) => {
-            println!("[WS] bağlantı reddedildi: {msg}");
-            return Ok(HttpResponse::Unauthorized().body(msg));
-        }
-    };
+    // Kullanıcıyı manuel olarak doğrula
+    let user = get_user_from_req(&req, &auth_cfg)?;
 
-    // actor başlat
-    let ws = UretimWs::new(musteri_id, pool.get_ref().clone());
+    let rx = tx.subscribe();
+    let ws = UretimWs::new(user.musteri_id, rx);
     ws::start(ws, &req, stream)
 }

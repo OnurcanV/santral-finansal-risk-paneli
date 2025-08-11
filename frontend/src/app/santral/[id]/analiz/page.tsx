@@ -1,4 +1,6 @@
-// frontend/src/app/santral/[id]/analiz/page.tsx
+// Dosya: frontend/src/app/santral/[id]/analiz/page.tsx
+// DÜZELTME: "Rendered more hooks..." hatasını çözmek için tüm Hook çağrılarını
+// bileşenin en başına, koşullu return'lerden önceye taşıyoruz.
 'use client';
 
 import { useEffect, useState, useRef } from 'react';
@@ -13,22 +15,22 @@ import CsvUploader from '@/components/CsvUploader';
 import SonucGrafikleri from '@/components/SonucGrafikleri';
 
 export default function AnalizSayfasi({ params }: { params: { id: string } }) {
+  // --- ADIM 1: TÜM HOOK'LARI BURADA, EN BAŞTA TOPLA ---
   const { session } = useAuth();
-
   const [santral, setSantral] = useState<Santral | null>(null);
   const [loading, setLoading] = useState(true);
-
-  // Hem tekli hem de toplu sonuçlar için ayrı state'ler
   const [tekliSonuc, setTekliSonuc] = useState<DengesizlikOutput | null>(null);
   const [topluSonuclar, setTopluSonuclar] = useState<DengesizlikOutput[] | null>(null);
-
-  // Scroll için referanslar
   const tekliResultRef = useRef<HTMLDivElement>(null);
   const topluResultRef = useRef<HTMLDivElement>(null);
 
+  // Veri çekme useEffect'i
   useEffect(() => {
     async function fetchSantralDetay() {
-      if (!session) { setLoading(false); return; }
+      if (!session) { 
+        setLoading(false); 
+        return; 
+      }
       try {
         setLoading(true);
         const data = await getSantralById(params.id, session);
@@ -42,17 +44,7 @@ export default function AnalizSayfasi({ params }: { params: { id: string } }) {
     fetchSantralDetay();
   }, [params.id, session]);
 
-  // Auth yoksa
-  if (!session) {
-    return (
-      <main className="container mx-auto p-8 text-center">
-        <p>Giriş yapmanız gerekiyor.</p>
-        <Link href="/login" className="text-brand-green underline">Giriş</Link>
-      </main>
-    );
-  }
-
-  // Sonuç gelince scroll
+  // Scroll useEffect'leri
   useEffect(() => {
     if (tekliSonuc) {
       tekliResultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -65,13 +57,22 @@ export default function AnalizSayfasi({ params }: { params: { id: string } }) {
     }
   }, [topluSonuclar]);
 
-  // Tekli form callback
+  // --- ADIM 2: KOŞULLU RETURN'LERİ HOOK'LARDAN SONRA YAP ---
+  if (!session) {
+    return (
+      <main className="container mx-auto p-8 text-center">
+        <p>Giriş yapmanız gerekiyor.</p>
+        <Link href="/login" className="text-brand-green underline">Giriş</Link>
+      </main>
+    );
+  }
+
+  // Callback fonksiyonları
   const handleTekliHesaplama = (sonuc: DengesizlikOutput) => {
     setTopluSonuclar(null);
     setTekliSonuc(sonuc);
   };
 
-  // CSV callback
   const handleTopluHesaplama = (sonuclar: DengesizlikOutput[]) => {
     setTekliSonuc(null);
     setTopluSonuclar(sonuclar);
@@ -141,7 +142,7 @@ export default function AnalizSayfasi({ params }: { params: { id: string } }) {
                   <tr key={i} className="hover:bg-base-dark/50">
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-text-dark">{i + 1}. Saat</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-text-light font-mono">{r.dengesizlik_miktari_mwh.toFixed(2)}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-text-light">{r.dengesizlik_tipi.includes("Pozitif") ? '🟢' : '🔴'} {r.dengesizlik_tipi}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-text-light">{r.dengesizlik_tipi.includes("Pozitif") ? '🟢' : '�'} {r.dengesizlik_tipi}</td>
                     <td className={`px-6 py-4 whitespace-nowrap text-sm font-semibold ${r.dengesizlik_tutari_tl < 0 ? 'text-red-400' : 'text-green-400'}`}>
                       {r.dengesizlik_tutari_tl.toLocaleString('tr-TR', { style: 'currency', currency: 'TRY' })}
                     </td>

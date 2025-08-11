@@ -7,6 +7,7 @@ import type { AuthSession } from '@/types/auth';
 import type { Santral, InputSantral } from '@/types/santral';
 import { apiFetch } from '@/lib/api';
 
+
 /* ---------------- DENGESİZLİK ---------------- */
 
 export type DengesizlikInput = {
@@ -112,4 +113,24 @@ export async function saveKgupPlan(
     { method: 'POST', body: JSON.stringify(plan) },
     session
   );
+}
+
+
+/**
+ * Giriş yapmış müşteriye ait santrallerin listesini getirir.
+ * Backend, session token'ına göre doğru santralleri otomatik olarak filtreler.
+ * @param session - Kimlik doğrulama için AuthSession.
+ */
+export async function getSantrallerByMusteri(session: AuthSession): Promise<Santral[]> {
+  return await apiFetch<Santral[]>("/api/santraller", {}, session);
+}
+
+export async function getTarihselRapor(
+  santralId: string,
+  startDate: string,
+  endDate: string,
+  session: AuthSession
+): Promise<PlanGercekResponse> {
+  const path = `/api/santral/${santralId}/tarihsel?start=${startDate}&end=${endDate}`;
+  return await apiFetch<PlanGercekResponse>(path, {}, session);
 }

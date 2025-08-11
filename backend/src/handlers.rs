@@ -12,6 +12,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 use chrono::NaiveDate;
 use crate::models::SapmaGunResponse;
+use bigdecimal::ToPrimitive;
 
 use crate::db;
 use crate::models::{
@@ -19,6 +20,7 @@ use crate::models::{
 };
 use crate::auth::{create_jwt, verify_password, AuthConfig};
 use crate::auth_mw::AuthenticatedUser;
+use crate::models::Musteri; // Musteri modelini import et
 
 // -----------------------------------------------------------------------------
 // AUTH
@@ -39,59 +41,36 @@ pub struct LoginResponse {
 }
 
 /// POST /auth/login
-///
-/// Body: { "email": "...", "sifre": "..." }
 pub async fn login_handler(
     pool: web::Data<PgPool>,
     auth_cfg: web::Data<AuthConfig>,
     form: web::Json<LoginRequest>,
 ) -> Result<HttpResponse, Error> {
-    // Kullanıcıyı çek
     let user = sqlx::query_as!(
         Kullanici,
         r#"
-        SELECT
-            id,
-            musteri_id,
-            email,
-            sifre_hash,
-            ad_soyad,
-            rol,
-            aktif,
-            olusturma_tarihi
-        FROM kullanicilar
-        WHERE email = $1
-        LIMIT 1
+        SELECT id, musteri_id, email, sifre_hash, ad_soyad, rol, aktif, olusturma_tarihi
+        FROM kullanicilar WHERE email = $1 LIMIT 1
         "#,
         form.email
     )
-    .fetch_optional(pool.get_ref())
-    .await
-    .map_err(|e| {
+    .fetch_optional(pool.get_ref()).await.map_err(|e| {
         log::error!("DB login error: {e}");
         actix_web::error::ErrorInternalServerError("db hata")
     })?;
 
-    // Kullanıcı var mı?
     let user = match user {
         Some(u) => {
-            if !u.aktif {
-                return Ok(HttpResponse::Unauthorized().body("Hesap pasif."));
-            }
+            if !u.aktif { return Ok(HttpResponse::Unauthorized().body("Hesap pasif.")); }
             u
         }
-        None => {
-            // generic mesaj → bilgi sızmasını engelle
-            return Ok(HttpResponse::Unauthorized().body("Giriş bilgileri hatalı."));
-        }
+        None => { return Ok(HttpResponse::Unauthorized().body("Giriş bilgileri hatalı.")); }
     };
 
-    // Şifre doğrulama
     if !verify_password(&form.sifre, &user.sifre_hash) {
-    return Ok(HttpResponse::Unauthorized().body("Giriş bilgileri hatalı."));
+        return Ok(HttpResponse::Unauthorized().body("Giriş bilgileri hatalı."));
     }
 
-    // JWT üret
     let token = create_jwt(&auth_cfg, user.id, user.musteri_id, &user.rol).map_err(|e| {
         log::error!("JWT üretilemedi: {e}");
         actix_web::error::ErrorInternalServerError("jwt hata")
@@ -108,8 +87,6 @@ pub async fn login_handler(
 }
 
 /// GET /auth/whoami
-///
-/// Authorization: Bearer <token>
 pub async fn whoami(user: AuthenticatedUser) -> HttpResponse {
     HttpResponse::Ok().json(serde_json::json!({
         "user_id": user.user_id,
@@ -117,6 +94,7 @@ pub async fn whoami(user: AuthenticatedUser) -> HttpResponse {
         "rol": user.rol,
     }))
 }
+
 
 // -----------------------------------------------------------------------------
 // SANTRAL CRUD
@@ -129,7 +107,12 @@ pub async fn create_santral_handler(
     yeni_santral: web::Json<InputSantral>,
 ) -> impl Responder {
     let data = yeni_santral.into_inner();
-    let musteri_id = user.musteri_id; // admin de kendi default musteri'sine ekliyor (şimdilik)
+    
+    // --- ÇÖZÜM (Veri Sahipliği Sorunu) ---
+    // Token'dan gelen musteri_id'yi alıyoruz. Admin bir müşterinin kimliğine
+    // büründüğünde, bu ID o müşterinin ID'si olur. Yeni santral,
+    // bu ID ile oluşturulur ve doğru portföye ait olur.
+    let musteri_id = user.musteri_id;
 
     match db::create_santral_for_musteri(pool.get_ref(), musteri_id, data).await {
         Ok(santral) => HttpResponse::Ok().json(santral),
@@ -145,21 +128,20 @@ pub async fn get_all_santraller_handler(
     pool: web::Data<PgPool>,
     user: AuthenticatedUser,
 ) -> impl Responder {
-    if user.rol == "admin" {
-        match db::get_all_santraller(pool.get_ref()).await {
-            Ok(santraller) => HttpResponse::Ok().json(santraller),
-            Err(e) => {
-                eprintln!("Santraller listelenirken hata oluştu: {:?}", e);
-                HttpResponse::InternalServerError().finish()
-            }
-        }
-    } else {
-        match db::get_santraller_by_musteri(pool.get_ref(), user.musteri_id).await {
-            Ok(santraller) => HttpResponse::Ok().json(santraller),
-            Err(e) => {
-                eprintln!("Müşteri santralleri listelenirken hata oluştu: {:?}", e);
-                HttpResponse::InternalServerError().finish()
-            }
+    // --- ÇÖZÜM (Veri Sızıntısı Sorunu) ---
+    // ÖNCEKİ GÜVENLİK AÇIĞI:
+    // if user.rol == "admin" { db::get_all_santraller(...) } ...
+    // Bu kod, admin'in tüm veritabanını görmesine neden oluyordu.
+
+    // GÜVENLİ YAKLAŞIM:
+    // Rol kontrolü yapmıyoruz. Her zaman token içinde o an aktif olan musteri_id'yi
+    // kullanarak veriyi filtreliyoruz. Bu, admin bir müşterinin kimliğine büründüğünde
+    // sadece ve sadece o müşterinin verisini görmesini garanti eder.
+    match db::get_santraller_by_musteri(pool.get_ref(), user.musteri_id).await {
+        Ok(santraller) => HttpResponse::Ok().json(santraller),
+        Err(e) => {
+            eprintln!("Müşteri santralleri listelenirken hata oluştu: {:?}", e);
+            HttpResponse::InternalServerError().finish()
         }
     }
 }
@@ -172,40 +154,24 @@ pub async fn delete_santral_handler(
 ) -> impl Responder {
     let santral_id = id.into_inner();
 
-    // admin → doğrudan sil
-    if user.rol == "admin" {
-        match db::delete_santral_by_id(pool.get_ref(), santral_id).await {
-            Ok(rows) if rows > 0 => {
-                return HttpResponse::Ok().json(serde_json::json!({"status":"success"}));
-            }
-            Ok(_) => {
-                return HttpResponse::NotFound().json(serde_json::json!({"status":"error","message":"Santral bulunamadı."}));
-            }
+    // Yetki kontrolü: Admin ise veya santral kullanıcıya aitse devam et
+    if user.rol != "admin" {
+        match db::santral_belongs_to_musteri(pool.get_ref(), santral_id, user.musteri_id).await {
+            Ok(true) => {} // Sahibi, silebilir
+            Ok(false) => return HttpResponse::Forbidden().json(serde_json::json!({"status":"error","message":"Yetkiniz yok."})),
             Err(e) => {
-                eprintln!("Santral sil hata: {e:?}");
+                eprintln!("Sahiplik kontrol hatası: {e:?}");
                 return HttpResponse::InternalServerError().finish();
             }
         }
     }
 
-    // user → sahiplik kontrolü
-    match db::santral_belongs_to_musteri(pool.get_ref(), santral_id, user.musteri_id).await {
-        Ok(true) => {}
-        Ok(false) => {
-            return HttpResponse::Forbidden().json(serde_json::json!({"status":"error","message":"Yetkin yok."}));
-        }
-        Err(e) => {
-            eprintln!("Sahiplik kontrol hata: {e:?}");
-            return HttpResponse::InternalServerError().finish();
-        }
-    }
-
-    // sahip → sil
+    // Silme işlemi
     match db::delete_santral_by_id(pool.get_ref(), santral_id).await {
         Ok(rows) if rows > 0 => HttpResponse::Ok().json(serde_json::json!({"status":"success"})),
         Ok(_) => HttpResponse::NotFound().json(serde_json::json!({"status":"error","message":"Santral bulunamadı."})),
         Err(e) => {
-            eprintln!("Santral sil hata: {e:?}");
+            eprintln!("Santral silme hatası: {e:?}");
             HttpResponse::InternalServerError().finish()
         }
     }
@@ -220,25 +186,24 @@ pub async fn update_santral_handler(
 ) -> impl Responder {
     let santral_id = id.into_inner();
 
+    // Yetki kontrolü
     if user.rol != "admin" {
-        match db::santral_belongs_to_musteri(pool.get_ref(), santral_id, user.musteri_id).await {
+         match db::santral_belongs_to_musteri(pool.get_ref(), santral_id, user.musteri_id).await {
             Ok(true) => {}
-            Ok(false) => {
-                return HttpResponse::Forbidden().json(serde_json::json!({"status":"error","message":"Yetkin yok."}));
-            }
+            Ok(false) => return HttpResponse::Forbidden().json(serde_json::json!({"status":"error","message":"Yetkiniz yok."})),
             Err(e) => {
-                eprintln!("Sahiplik kontrol hata: {e:?}");
+                eprintln!("Sahiplik kontrol hatası: {e:?}");
                 return HttpResponse::InternalServerError().finish();
             }
         }
     }
-
+    
     let data = santral_data.into_inner();
     match db::update_santral_by_id(pool.get_ref(), santral_id, data).await {
         Ok(santral) => HttpResponse::Ok().json(santral),
         Err(sqlx::Error::RowNotFound) => HttpResponse::NotFound().json(serde_json::json!({"status":"error","message":"Santral bulunamadı."})),
         Err(e) => {
-            eprintln!("Update santral hata: {e:?}");
+            eprintln!("Update santral hatası: {e:?}");
             HttpResponse::InternalServerError().finish()
         }
     }
@@ -253,13 +218,11 @@ pub async fn get_santral_by_id_handler(
     let santral_id = id.into_inner();
 
     if user.rol != "admin" {
-        match db::santral_belongs_to_musteri(pool.get_ref(), santral_id, user.musteri_id).await {
+         match db::santral_belongs_to_musteri(pool.get_ref(), santral_id, user.musteri_id).await {
             Ok(true) => {}
-            Ok(false) => {
-                return HttpResponse::Forbidden().json(serde_json::json!({"status":"error","message":"Yetkin yok."}));
-            }
+            Ok(false) => return HttpResponse::Forbidden().json(serde_json::json!({"status":"error","message":"Yetkiniz yok."})),
             Err(e) => {
-                eprintln!("Sahiplik kontrol hata: {e:?}");
+                eprintln!("Sahiplik kontrol hatası: {e:?}");
                 return HttpResponse::InternalServerError().finish();
             }
         }
@@ -269,11 +232,34 @@ pub async fn get_santral_by_id_handler(
         Ok(santral) => HttpResponse::Ok().json(santral),
         Err(sqlx::Error::RowNotFound) => HttpResponse::NotFound().json(serde_json::json!({"status":"error","message":"Santral bulunamadı."})),
         Err(e) => {
-            eprintln!("Get santral hata: {e:?}");
+            eprintln!("Get santral hatası: {e:?}");
             HttpResponse::InternalServerError().finish()
         }
     }
 }
+
+/// GET /api/admin/musteriler
+#[get("/api/admin/musteriler")]
+pub async fn get_musteriler_handler(
+    pool: web::Data<PgPool>,
+    user: AuthenticatedUser,
+) -> impl Responder {
+    if user.rol != "admin" {
+        return HttpResponse::Forbidden().json(serde_json::json!({
+            "status": "error",
+            "message": "Bu kaynağa erişim yetkiniz yok."
+        }));
+    }
+
+    match db::get_all_musteriler(pool.get_ref()).await {
+        Ok(musteriler) => HttpResponse::Ok().json(musteriler),
+        Err(e) => {
+            log::error!("Müşteriler listelenirken DB hatası: {e}");
+            HttpResponse::InternalServerError().finish()
+        }
+    }
+}
+
 
 
 // -----------------------------------------------------------------------------

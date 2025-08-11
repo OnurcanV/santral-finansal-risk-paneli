@@ -1,81 +1,68 @@
-// frontend/src/components/SantralListesi.tsx
+// Dosya: frontend/src/components/SantralListesi.tsx
+// DÜZELTME: 'manage' modundaki butonlar isteğe göre sadeleştirildi.
 'use client';
 
+import type { Santral } from '@/types/santral';
 import Link from 'next/link';
-import { useAuth } from '@/context/AuthContext';
-import { Santral } from "@/types/santral";
 
 interface Props {
   santraller: Santral[];
-  onSantralSilindi: (id: string) => void;
-  onDuzenle: (santral: Santral) => void;
+  onSantralSilindi?: (id: string) => void;
+  onDuzenle?: (santral: Santral) => void;
+  onSantralSec?: (santral: Santral) => void;
+  seciliSantralId?: string | null;
+  mode?: 'manage' | 'select';
 }
 
-export default function SantralListesi({ santraller, onSantralSilindi, onDuzenle }: Props) {
-  const { session } = useAuth();
-  const rol = session?.rol ?? 'user';
+export default function SantralListesi({
+  santraller,
+  onSantralSilindi,
+  onDuzenle,
+  onSantralSec,
+  seciliSantralId,
+  mode = 'manage',
+}: Props) {
+
+  if (santraller.length === 0) {
+    return <p className="text-text-dark">Portföyünüzde kayıtlı santral bulunmuyor.</p>;
+  }
+
+  if (mode === 'select') {
+    return (
+        <div className="space-y-2">
+            {santraller.map(s => (
+                <button
+                    key={s.id}
+                    onClick={() => onSantralSec?.(s)}
+                    className={`w-full text-left p-3 rounded-md transition-colors ${
+                        seciliSantralId === s.id 
+                            ? 'bg-brand-neon-green text-black font-bold' 
+                            : 'bg-component-dark hover:bg-border-dark'
+                    }`}
+                >
+                    <span className="font-semibold">{s.ad}</span>
+                    <span className="text-sm text-text-dark ml-2">({s.tip})</span>
+                </button>
+            ))}
+        </div>
+    );
+  }
 
   return (
-    <div className="mt-12 max-w-3xl mx-auto">
-      <h2 className="text-2xl font-bold text-text-light mb-4">Kaydedilen Santraller</h2>
-      <div className="bg-component-dark border border-border-dark rounded-lg p-4 space-y-3">
-        {santraller.map((santral) => (
-          <div
-            key={santral.id}
-            className="p-3 bg-base-dark rounded-md flex justify-between items-center transition-all hover:bg-border-dark"
-          >
-            <div>
-              <p className="font-semibold text-text-light">
-                {santral.ad}
-                <span className="ml-2 text-xs font-mono bg-brand-green/20 text-brand-green px-2 py-1 rounded-full">
-                  {santral.tip}
-                </span>
-              </p>
-              <p className="text-sm text-text-dark">Kurulu Güç: {santral.kurulu_guc_mw} MW</p>
-            </div>
-
-            <div className="flex items-center space-x-2">
-              {/* Planlama: sadece admin */}
-              {rol === 'admin' && (
-                <Link href={`/santral/${santral.id}/planlama`}>
-                  <button
-                    className="bg-yellow-900/50 text-yellow-400 border border-yellow-500/50 rounded-md px-3 py-1 text-sm font-semibold transition-all hover:bg-yellow-500 hover:text-white"
-                  >
-                    Planlama
-                  </button>
-                </Link>
-              )}
-
-              {/* Analiz: herkes */}
-              <Link href={`/santral/${santral.id}/analiz`}>
-                <button
-                  className="bg-cyan-900/50 text-cyan-400 border border-cyan-500/50 rounded-md px-3 py-1 text-sm font-semibold transition-all hover:bg-cyan-500 hover:text-white"
-                >
-                  Analiz
-                </button>
-              </Link>
-
-              {/* Düzenle + Sil: sadece admin */}
-              {rol === 'admin' && (
-                <>
-                  <button
-                    onClick={() => onDuzenle(santral)}
-                    className="bg-blue-900/50 text-blue-400 border border-blue-500/50 rounded-md px-3 py-1 text-sm font-semibold transition-all hover:bg-blue-500 hover:text-white"
-                  >
-                    Düzenle
-                  </button>
-                  <button
-                    onClick={() => onSantralSilindi(santral.id)}
-                    className="bg-red-900/50 text-red-400 border border-red-500/50 rounded-md px-3 py-1 text-sm font-semibold transition-all hover:bg-red-500 hover:text-white"
-                  >
-                    Sil
-                  </button>
-                </>
-              )}
-            </div>
+    <div className="space-y-4">
+      {santraller.map((s) => (
+        <div key={s.id} className="bg-component-dark p-4 rounded-lg border border-border-dark flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+          <div>
+            <h3 className="text-xl font-bold text-text-light">{s.ad} <span className="text-sm font-normal text-text-dark">{s.tip}</span></h3>
+            <p className="text-text-dark text-sm mt-1">Kurulu Güç: {s.kurulu_guc_mw} MW</p>
           </div>
-        ))}
-      </div>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            {/* DÜZELTME: Sadece Düzenle ve Sil butonları kaldı. */}
+            <button onClick={() => onDuzenle?.(s)} className="text-sm px-3 py-1 rounded-md bg-blue-500/20 text-blue-300 hover:bg-blue-500/40 transition-colors">Düzenle</button>
+            <button onClick={() => onSantralSilindi?.(s.id)} className="text-sm px-3 py-1 rounded-md bg-red-500/20 text-red-300 hover:bg-red-500/40 transition-colors">Sil</button>
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

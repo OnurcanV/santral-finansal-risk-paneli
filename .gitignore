@@ -21,3 +21,4 @@ frontend/.next/
 frontend/out/
 
 backend/plan.json
+websocat

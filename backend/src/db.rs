@@ -1,26 +1,40 @@
-// src/db.rs — derlenebilir, sqlx-query kontrollü sürüm
-// -----------------------------------------------
-use crate::models::{
-    InputSantral, KgupPlan, KgupPlanInput, Santral, SapmaSaat,
-};
+// src/db.rs — Veritabanı işlemlerinin yapıldığı modül
+// Burada SQLx kütüphanesiyle PostgreSQL veritabanı sorguları yapılır.
+
+// Modülden ihtiyaç duyulan modeller alınır.
+use crate::models::{InputSantral, KgupPlan, KgupPlanInput, Santral, SapmaSaat};
+
+// Büyük ondalıklı sayılar için bigdecimal kütüphanesi
 use bigdecimal::{BigDecimal, ToPrimitive};
+
+// Tarih ve zaman işlemleri için chrono kütüphanesi
 use chrono::{DateTime, NaiveDate, Utc};
+
+// JSON işlemleri için serde_json
 use serde_json::json;
+
+// SQLx bağlantı havuzu (pool) tipi
 use sqlx::PgPool;
+
+// UUID türü
 use uuid::Uuid;
+use crate::models::UretimOlcum; // <-- YENİ
+use crate::models::Musteri; // Musteri modelini import et
 
 //-----------------------------------------------------------
-// SANTRAL CRUD
+// SANTRAL CRUD İşlemleri
 //-----------------------------------------------------------
 
-/// Yeni santral ekler ve kaydı döndürür.
-/// `musteri_id` şimdilik NULL bırakılabilir.
+/// Yeni santral ekler ve eklenen kaydı döndürür.
+/// musteri_id alanı şimdilik opsiyonel (NULL olabilir).
 pub async fn create_santral(
     pool: &PgPool,
     data: InputSantral,
 ) -> Result<Santral, sqlx::Error> {
+    // Yeni benzersiz UUID oluştur
     let new_id = Uuid::new_v4();
 
+    // SQL sorgusu ile yeni santral kaydı ekleniyor
     sqlx::query_as!(
         Santral,
         r#"
@@ -41,11 +55,11 @@ pub async fn create_santral(
         data.koordinat_enlem,
         data.koordinat_boylam,
     )
-    .fetch_one(pool)
+    .fetch_one(pool) // sorgu sonucu tek kayıt olarak alınır
     .await
 }
 
-/// Tüm santralleri (yeni → eski) getirir.
+/// Tüm santralleri oluşturulma tarihine göre (yeniden eskiye doğru) getirir.
 pub async fn get_all_santraller(pool: &PgPool) -> Result<Vec<Santral>, sqlx::Error> {
     sqlx::query_as!(
         Santral,
@@ -57,11 +71,11 @@ pub async fn get_all_santraller(pool: &PgPool) -> Result<Vec<Santral>, sqlx::Err
         ORDER  BY olusturma_tarihi DESC
         "#
     )
-    .fetch_all(pool)
+    .fetch_all(pool) // tüm kayıtları liste olarak al
     .await
 }
 
-/// Santrali günceller.
+/// Verilen ID'ye sahip santrali günceller ve güncellenmiş kaydı döndürür.
 pub async fn update_santral_by_id(
     pool: &PgPool,
     santral_id: Uuid,
@@ -92,7 +106,8 @@ pub async fn update_santral_by_id(
     .await
 }
 
-/// Santral siler; etkilenen satır sayısını döndürür.
+/// Verilen ID'ye sahip santrali siler.
+/// Dönen değer silinen satır sayısıdır (0 veya 1).
 pub async fn delete_santral_by_id(
     pool: &PgPool,
     santral_id: Uuid,
@@ -106,7 +121,7 @@ pub async fn delete_santral_by_id(
     Ok(res.rows_affected())
 }
 
-/// ID ile santral getirir.
+/// Verilen ID'ye sahip santrali getirir.
 pub async fn get_santral_by_id(
     pool: &PgPool,
     santral_id: Uuid,
@@ -127,17 +142,19 @@ pub async fn get_santral_by_id(
 }
 
 //-----------------------------------------------------------
-// KGÜP PLAN
+// KGÜP PLAN İşlemleri
 //-----------------------------------------------------------
 
-/// KGÜP planı ekler veya günceller.
+/// KGÜP planı ekler veya varsa günceller.
 pub async fn create_or_update_kgup_plan(
     pool: &PgPool,
     santral_id: Uuid,
     plan: KgupPlanInput,
 ) -> Result<KgupPlan, sqlx::Error> {
+    // Saatlik plan MWh değerleri JSON formatına dönüştürülür
     let saatlik_plan_json = json!(plan.saatlik_plan_mwh);
 
+    // INSERT ... ON CONFLICT ile varsa güncelle, yoksa ekle işlemi yapılır
     sqlx::query_as!(
         KgupPlan,
         r#"
@@ -159,9 +176,10 @@ pub async fn create_or_update_kgup_plan(
 }
 
 //-----------------------------------------------------------
-// MÜŞTERİYE GÖRE İŞLEMLER
+// Müşteri Bazlı Santral İşlemleri
 //-----------------------------------------------------------
 
+/// Belirli müşteriye ait yeni santral ekler.
 pub async fn create_santral_for_musteri(
     pool: &PgPool,
     musteri_id: Uuid,
@@ -192,6 +210,7 @@ pub async fn create_santral_for_musteri(
     .await
 }
 
+/// Belirli müşteriye ait tüm santralleri tarih sırasına göre getirir.
 pub async fn get_santraller_by_musteri(
     pool: &PgPool,
     musteri_id: Uuid,
@@ -212,6 +231,7 @@ pub async fn get_santraller_by_musteri(
     .await
 }
 
+/// Santralin belirli bir müşteriye ait olup olmadığını kontrol eder.
 pub async fn santral_belongs_to_musteri(
     pool: &PgPool,
     santral_id: Uuid,
@@ -233,9 +253,10 @@ pub async fn santral_belongs_to_musteri(
 }
 
 //-----------------------------------------------------------
-// GERÇEK ZAMANLI ÜRETİM (WebSocket görünümü)
+// Gerçek Zamanlı Üretim Verileri (WebSocket için görünüm)
 //-----------------------------------------------------------
 
+/// WebSocket için üretim verilerini tutan yapı
 #[derive(Debug, serde::Serialize)]
 pub struct WsSantralUretimRow {
     pub id: Uuid,
@@ -245,6 +266,8 @@ pub struct WsSantralUretimRow {
     pub son_ts: Option<DateTime<Utc>>,
 }
 
+/// Belirli müşteriye ait santrallerin son üretim verilerini getirir.
+/// Santralin kurulu gücü, son ölçülen güç ve zaman bilgisi ile döner.
 pub async fn get_son_uretimler_by_musteri(
     pool: &PgPool,
     musteri_id: Uuid,
@@ -273,6 +296,7 @@ pub async fn get_son_uretimler_by_musteri(
     .fetch_all(pool)
     .await?;
 
+    // Sorgudan dönen ham veriler, WsSantralUretimRow yapısına dönüştürülür.
     Ok(rows
         .into_iter()
         .map(|r| WsSantralUretimRow {
@@ -289,11 +313,14 @@ pub async fn get_son_uretimler_by_musteri(
 // SAPMA HESAPLARI
 //-----------------------------------------------------------
 
+/// Saatlik sapma verilerini, plan ile gerçek üretim arasındaki farkları getirir.
+/// gun parametresi, sorgulanacak günün tarihidir.
 pub async fn sapma_saatlik_gun(
     pool: &PgPool,
     santral_id: Uuid,
     gun: NaiveDate,
 ) -> Result<Vec<SapmaSaat>, sqlx::Error> {
+    // SQL sorgusu, planlanan ve gerçek üretim verilerini saat saat karşılaştırır.
     let rows = sqlx::query!(
         r#"
 WITH gun_aralik AS (
@@ -349,14 +376,20 @@ ORDER BY sg.saat_index
     .fetch_all(pool)
     .await?;
 
+    // SQL'den gelen veriler, SapmaSaat yapısına uygun hale getirilir
     let mut out = Vec::with_capacity(rows.len());
     for r in rows {
+        // plan ve gerçek üretim sayısal değerlere çevrilir
         let plan_mwh   = r.plan_mwh.and_then(|v| v.to_f64());
         let gercek_mwh = r.gercek_mwh.and_then(|v| v.to_f64());
+
+        // Sapma değerleri hesaplanır (gerçek - plan)
         let sapma_mwh  = match (plan_mwh, gercek_mwh) {
             (Some(p), Some(g)) => Some(g - p),
             _ => None,
         };
+
+        // Sapma oranı (yüzde gibi) hesaplanır
         let sapma_oran = match (plan_mwh, gercek_mwh) {
             (Some(p), Some(g)) if p > 0.0 => Some((g - p) / p),
             _ => None,
@@ -375,14 +408,15 @@ ORDER BY sg.saat_index
 }
 
 //-----------------------------------------------------------
-// PLAN VS GERÇEK — TARİH ARALIĞI
+// PLAN VE GERÇEK ÜRETİM — Belirli Tarih Aralığında
 //-----------------------------------------------------------
 
+/// Belirli tarih aralığında saatlik plan ve gerçek üretim değerlerini döner.
 pub async fn plan_gercek_aralik(
     pool: &PgPool,
     santral_id: Uuid,
     start: NaiveDate,
-    end: NaiveDate, // exclusive
+    end: NaiveDate, // end tarihi hariç (exclusive)
 ) -> Result<Vec<(DateTime<Utc>, Option<f64>, Option<f64>)>, sqlx::Error> {
     let rows = sqlx::query!(
         r#"
@@ -432,8 +466,46 @@ ORDER BY ts.saat_ts
     .fetch_all(pool)
     .await?;
 
+    // Sorgudan dönen satırlar, (zaman, plan, gerçek) üçlüsü olarak toplanır
     Ok(rows
         .into_iter()
         .map(|r| (r.saat_ts, r.plan_mwh, r.gercek_mwh))
         .collect())
 }
+
+/// Yeni bir üretim ölçümünü uretim_olcumleri tablosuna ekler.
+/// DÜZELTME: guc_mw parametresinin tipini f64 yerine BigDecimal olarak değiştiriyoruz.
+/// Bu, veritabanı sütun tipiyle eşleşerek derleme hatasını giderir.
+pub async fn insert_uretim_olcumu(
+    pool: &PgPool,
+    santral_id: Uuid,
+    guc_mw: BigDecimal,
+) -> Result<UretimOlcum, sqlx::Error> {
+    sqlx::query_as!(
+        UretimOlcum,
+        r#"
+        INSERT INTO uretim_olcumleri (santral_id, guc_mw, zaman_utc)
+        VALUES ($1, $2, $3)
+        RETURNING id, santral_id, guc_mw, zaman_utc
+        "#,
+        santral_id,
+        guc_mw,
+        Utc::now()
+    )
+    .fetch_one(pool) // Artık eklenen kaydı geri alıyoruz.
+    .await
+}
+
+/// Sadece admin tarafından kullanılmak üzere, sistemdeki tüm müşterileri listeler.
+pub async fn get_all_musteriler(pool: &PgPool) -> Result<Vec<Musteri>, sqlx::Error> {
+    sqlx::query_as!(
+        Musteri,
+        r#"
+        SELECT id, ad, aktif, olusturma_tarihi
+        FROM musteriler
+        ORDER BY ad ASC
+        "#
+    )
+    .fetch_all(pool)
+    .await
+} 

@@ -1,94 +1,110 @@
-"use client";
+// Dosya: frontend/src/app/santraller/page.tsx
+// DÜZELTME: Bu sayfa, eski fonksiyonelliğini koruyarak yeni tasarıma kavuştu.
+'use client';
 
-import React, { useEffect, useState } from "react";
-import { useAuth } from "@/context/AuthContext";
-import { apiFetch } from "@/lib/api";
+import { useState, useEffect } from "react";
+import toast from "react-hot-toast";
+import SantralEkleForm from "@/components/SantralEkleForm";
+import SantralListesi from "@/components/SantralListesi";
+import { getSantraller, deleteSantral } from "@/services/santralApiService";
 import type { Santral } from "@/types/santral";
-import Link from "next/link";
+import { useAuth } from "@/context/AuthContext";
+import { useRouter } from "next/navigation";
 
 export default function SantrallerPage() {
-  const { session, logout } = useAuth();
-  const [data, setData] = useState<Santral[]>([]);
-  const [err, setErr] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { session, loading: authLoading } = useAuth();
+  const router = useRouter();
+  const [santraller, setSantraller] = useState<Santral[]>([]);
+  const [editingSantral, setEditingSantral] = useState<Santral | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
-  // veri çek
   useEffect(() => {
-    async function load() {
-      if (!session) {
-        setLoading(false);
-        return;
-      }
-      try {
-        const rows = await apiFetch<Santral[]>("/api/santraller", {}, session);
-        setData(rows);
-      } catch (e: any) {
-        console.error(e);
-        setErr(e.message ?? "Hata");
-      } finally {
-        setLoading(false);
-      }
+    if (!authLoading && !session) {
+      router.push('/login');
     }
-    load();
+  }, [session, authLoading, router]);
+
+  const fetchSantraller = async () => {
+    if (!session) {
+      setSantraller([]);
+      setIsLoading(false);
+      return;
+    }
+    try {
+      setIsLoading(true);
+      const data = await getSantraller(session);
+      setSantraller(data);
+    } catch (err) {
+      console.error(err);
+      toast.error("Santraller yüklenemedi.");
+      setSantraller([]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (session) {
+      fetchSantraller();
+    }
   }, [session]);
 
-  // login yoksa
-  if (!session) {
-    return (
-      <div className="p-4">
-        <p>Giriş yapılmadı. <Link className="text-blue-600 underline" href="/login">Giriş yap</Link></p>
-      </div>
-    );
+  const handleSantralSilindi = async (id: string) => {
+    if (!session) return;
+    const s = santraller.find((x) => x.id === id);
+    if (!s) return;
+    
+    if (!confirm(`'${s.ad} ${s.tip}' silinsin mi?`)) return;
+
+    try {
+      await deleteSantral(id, session);
+      toast.success(`'${s.ad}' silindi.`);
+      fetchSantraller();
+    } catch (err) {
+      console.error(err);
+      toast.error("Silinemedi.");
+    }
+  };
+
+  const handleDuzenleBaslat = (santral: Santral) => {
+    setEditingSantral(santral);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const handleFormSubmit = () => {
+    setEditingSantral(null);
+    fetchSantraller();
+  };
+
+  if (authLoading || !session) {
+    return <div className="container mx-auto p-8 text-center">Yükleniyor...</div>;
   }
 
   return (
-    <div className="p-4 space-y-4">
-      <header className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Santrallerim</h1>
-        <button
-          onClick={logout}
-          className="px-3 py-1 rounded bg-gray-700 text-white text-sm hover:bg-gray-800"
-        >
-          Çıkış
-        </button>
-      </header>
+    <main className="container mx-auto p-4 sm:p-8">
+      <div className="mb-12">
+        <h1 className="text-4xl font-bold text-text-light mb-2">Santral Yönetimi</h1>
+        <p className="text-text-dark">Yeni santral ekleyin veya mevcut santrallerinizi düzenleyin.</p>
+      </div>
 
-      {loading && <p>Yükleniyor...</p>}
-      {err && <p className="text-red-600">{err}</p>}
+      <SantralEkleForm
+        santralToEdit={editingSantral}
+        onFormSubmit={handleFormSubmit}
+      />
 
-      {!loading && !err && (
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="border-b">
-                <th className="py-1 px-2">Ad</th>
-                <th className="py-1 px-2">Tip</th>
-                <th className="py-1 px-2">Kurulu Güç (MW)</th>
-                <th className="py-1 px-2">Koord.</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.map((s) => (
-                <tr key={s.id} className="border-b hover:bg-gray-50">
-                  <td className="py-1 px-2">{s.ad}</td>
-                  <td className="py-1 px-2">{s.tip}</td>
-                  <td className="py-1 px-2">{s.kurulu_guc_mw}</td>
-                  <td className="py-1 px-2 text-xs">
-                    {s.koordinat_enlem}, {s.koordinat_boylam}
-                  </td>
-                </tr>
-              ))}
-              {data.length === 0 && (
-                <tr>
-                  <td className="py-2 px-2 text-gray-500" colSpan={4}>
-                    Kayıt yok.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
+      <div className="mt-16">
+        <h2 className="text-3xl font-bold text-text-light mb-6">Portföyünüzdeki Santraller</h2>
+        {isLoading ? (
+          <p className="text-center mt-12 animate-pulse">Santraller Yükleniyor...</p>
+        ) : (
+          <SantralListesi
+            santraller={santraller}
+            onSantralSilindi={handleSantralSilindi}
+            onDuzenle={handleDuzenleBaslat}
+            mode="manage"
+          />
+        )}
+      </div>
+    </main>
   );
 }

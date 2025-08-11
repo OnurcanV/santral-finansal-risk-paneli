@@ -126,3 +126,12 @@ pub struct PlanGercekResponse {
     pub toplam_sapma_mwh: Option<f64>,
     pub mape_yaklasik: Option<f64>,
 }
+
+// YENİ: uretim_olcumleri tablosu için bir model ekliyoruz.
+#[derive(Debug, FromRow, Serialize, Clone)]
+pub struct UretimOlcum {
+    pub id: Uuid,
+    pub santral_id: Uuid,
+    pub guc_mw: BigDecimal,
+    pub zaman_utc: DateTime<Utc>,
+}

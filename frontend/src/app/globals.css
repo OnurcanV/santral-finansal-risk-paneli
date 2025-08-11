@@ -1,3 +1,109 @@
+/* Dosya: frontend/src/app/globals.css */
+/* DÜZELTME: İsteğe göre ana rengi YEŞİL olan profesyonel bir tasarım sistemi için güncellendi. */
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  :root {
+    /* Profesyonel Yeşil Ana Tema */
+    --color-base: #f0fdf4;           /* Ana arka plan (Çok Açık Yeşil - Green 50) */
+    --color-component: #ffffff;      /* Bileşen Arka Planı (Beyaz) */
+    --color-border: #e2e8f0;         /* Kenarlık Rengi (Açık Gri - Slate 200) */
+    --color-text-primary: #1f2937;   /* Ana Metin Rengi (Koyu Gri/Siyah) */
+    --color-text-secondary: #4b5563; /* İkincil Metin Rengi (Orta Gri) */
+    --color-brand-primary: #4ade80;     /* Ana Vurgu Rengi (Canlı Yeşil - Green 400) */
+    --color-brand-dark: #166534;      /* Koyu Yeşil (Yeşil üzerindeki yazılar için) */
+  }
+
+  body {
+    background-color: var(--color-base);
+    color: var(--color-text-primary);
+    @apply antialiased;
+  }
+}
+
+@layer components {
+  /* Ana Buton Stili - İsteğine göre SİYAH BUTON */
+  .btn-primary {
+    @apply px-6 py-2 rounded-md text-sm font-bold transition-all duration-300
+           shadow-md hover:shadow-lg disabled:opacity-50 
+           disabled:cursor-not-allowed disabled:shadow-none;
+    background-color: var(--color-text-primary); /* Siyah Arka Plan */
+    color: var(--color-base); /* Beyaz Yazı */
+  }
+  .btn-primary:hover {
+    filter: brightness(1.2);
+  }
+  
+  /* İkincil Buton Stili (örn: İptal butonu) */
+  .btn-secondary {
+    @apply px-4 py-2 rounded-md text-sm font-medium border transition-colors;
+    background-color: var(--color-component);
+    border-color: var(--color-border);
+    color: var(--color-text-primary);
+  }
+  .btn-secondary:hover {
+    background-color: #f0fdf4; /* Çok Açık Yeşil */
+    border-color: var(--color-text-secondary);
+  }
+}
+
+/* --- React DatePicker için Özel Tema Stilleri --- */
+.react-datepicker-wrapper { @apply w-full; }
+.react-datepicker__input-container input { 
+    @apply w-full p-2 rounded-md;
+    background-color: var(--color-component);
+    border: 1px solid var(--color-border);
+    color: var(--color-text-primary);
+}
+.react-datepicker__input-container input:focus {
+    --tw-ring-color: var(--color-brand-primary);
+    border-color: var(--color-brand-primary);
+    @apply ring-2;
+}
+.react-datepicker { 
+    @apply font-sans rounded-lg; 
+    background-color: var(--color-component);
+    border: 1px solid var(--color-border);
+    color: var(--color-text-primary);
+}
+.react-datepicker__header { 
+    @apply border-b; 
+    background-color: var(--color-brand-primary); /* Üst bar yeşil */
+    border-bottom-color: var(--color-border);
+}
+.react-datepicker__current-month, .react-datepicker-time__header, .react-datepicker-year-header { 
+    @apply font-bold;
+    color: var(--color-brand-dark); /* Yeşil üzerindeki yazı koyu */
+}
+.react-datepicker__day-name, .react-datepicker__day, .react-datepicker__time-name { 
+    @apply w-8 h-8 leading-8;
+    color: var(--color-text-secondary);
+}
+.react-datepicker__day:hover, .react-datepicker__month-text:hover, .react-datepicker__quarter-text:hover, .react-datepicker__year-text:hover { 
+    @apply rounded-full;
+    background-color: var(--color-border);
+}
+.react-datepicker__day--selected, .react-datepicker__day--in-selecting-range, .react-datepicker__day--in-range { 
+    @apply font-bold rounded-full;
+    background-color: var(--color-brand-primary);
+    color: var(--color-brand-dark);
+}
+.react-datepicker__day--keyboard-selected { 
+    @apply rounded-full;
+    background-color: var(--color-brand-light);
+}
+.react-datepicker__day--disabled { 
+    color: var(--color-border);
+}
+.react-datepicker__navigation-icon::before { 
+    border-color: var(--color-brand-dark);
+}
+.react-datepicker__popper[data-placement^="bottom"] .react-datepicker__triangle::before { 
+    border-bottom-color: var(--color-border);
+}
+.react-datepicker__popper[data-placement^="top"] .react-datepicker__triangle::before { 
+    border-top-color: var(--color-border);
+}
